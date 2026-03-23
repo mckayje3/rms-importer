@@ -26,7 +26,7 @@ async def login():
         f"{settings.procore_authorize_url}"
         f"?client_id={settings.procore_client_id}"
         f"&response_type=code"
-        f"&redirect_uri=http://localhost:8000/auth/callback"
+        f"&redirect_uri={settings.backend_url}/auth/callback"
         f"&state={state}"
     )
     return {"auth_url": auth_url, "state": state}
@@ -49,7 +49,7 @@ async def callback(code: str = Query(...), state: str = Query(...)):
                 "code": code,
                 "client_id": settings.procore_client_id,
                 "client_secret": settings.procore_client_secret,
-                "redirect_uri": "http://localhost:8000/auth/callback",
+                "redirect_uri": f"{settings.backend_url}/auth/callback",
             },
         )
 

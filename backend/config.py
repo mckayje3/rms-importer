@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # Frontend URL (for CORS and redirects)
     frontend_url: str = "http://localhost:3000"
 
+    # Backend URL (for OAuth redirect URI)
+    backend_url: str = "http://localhost:8000"
+
     # Session secret for OAuth state
     session_secret: str = "change-me-in-production"
 
