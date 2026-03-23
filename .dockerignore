@@ -1,0 +1,8 @@
+backend/.env
+backend/data/
+backend/__pycache__/
+backend/*.db
+backend/*.db-*
+frontend/
+docs/
+*.pyc
