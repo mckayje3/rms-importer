@@ -1,5 +1,6 @@
 [phases.setup]
 nixPkgs = ["python312"]
+nixLibs = ["gcc"]
 
 [phases.install]
 cmds = ["cd backend && pip install -r requirements.txt"]
