@@ -1,0 +1,144 @@
+"""RMS data models."""
+from pydantic import BaseModel, computed_field
+from typing import Optional
+from datetime import date
+
+from .mappings import map_status, map_sd_to_type
+
+
+class RMSSubmittal(BaseModel):
+    """Submittal from RMS Submittal Register."""
+
+    section: str  # Spec section (e.g., "01 50 00")
+    item_no: int  # Item number
+    sd_no: Optional[str] = None  # SD number (01-11)
+    description: str
+    date_in: Optional[date] = None  # Not used - dates come from Transmittal Log
+    qc_code: Optional[str] = None  # A, B, C, D
+    date_out: Optional[date] = None  # Not used - dates come from Transmittal Log
+    qa_code: Optional[str] = None  # A, B, C, D, E, F, G, X
+    status: Optional[str] = None  # RMS status (Outstanding, Complete, In Review)
+
+    @property
+    def match_key(self) -> str:
+        """Generate match key for this submittal (revision 0 = original)."""
+        return f"{self.section}-{self.item_no}-0"
+
+    @computed_field
+    @property
+    def procore_status(self) -> Optional[str]:
+        """Map RMS status to Procore status."""
+        return map_status(self.status)
+
+    @computed_field
+    @property
+    def procore_type(self) -> Optional[str]:
+        """Map SD No to Procore submittal type."""
+        return map_sd_to_type(self.sd_no)
+
+
+class RMSAssignment(BaseModel):
+    """Assignment info from RMS Submittal Assignments."""
+
+    section: str
+    item_no: int
+    description: str
+    sd_no: Optional[str] = None
+    info_only: Optional[str] = None  # FIO, GA, S
+    required_for_activity: Optional[str] = None
+
+
+class TransmittalLogEntry(BaseModel):
+    """Entry from Transmittal Log."""
+
+    section: str
+    transmittal_number: str  # e.g., "01 50 00-4.2"
+    item_numbers: list[int]  # Expanded from comma-separated
+    revision: int  # Parsed from .X suffix (0 if no suffix)
+    contractor_prepared: Optional[date] = None
+    government_received: Optional[date] = None
+    government_returned: Optional[date] = None
+    contractor_received: Optional[date] = None
+
+    def match_keys(self) -> list[str]:
+        """Generate match keys for all items in this transmittal."""
+        return [f"{self.section}-{item}-{self.revision}" for item in self.item_numbers]
+
+
+class TransmittalReportEntry(BaseModel):
+    """Entry from Transmittal Report (QA codes for all revisions)."""
+
+    section: str  # Spec section (e.g., "01 01 00")
+    transmittal_no: int  # Transmittal number within section
+    revision: int  # 0 = original, 1+ = revision
+    item_no: int  # Item number
+    qa_code: Optional[str] = None  # A, B, C, D, E, F, G, X
+    classification: Optional[str] = None  # GA, FIO, S
+
+    @property
+    def match_key(self) -> str:
+        """Generate match key: section|item_no|revision."""
+        return f"{self.section}|{self.item_no}|{self.revision}"
+
+
+class RMSParseResult(BaseModel):
+    """Result of parsing RMS export files."""
+
+    submittals: list[RMSSubmittal]
+    assignments: list[RMSAssignment]
+    transmittal_entries: list[TransmittalLogEntry]
+    transmittal_report: list[TransmittalReportEntry] = []
+
+    # Stats
+    submittal_count: int
+    spec_section_count: int
+    revision_count: int
+
+    # Validation
+    errors: list[str] = []
+    warnings: list[str] = []
+
+
+class RMSDeficiency(BaseModel):
+    """Deficiency item from RMS QAQC Deficiencies report."""
+
+    item_number: str  # e.g., "QA-00001"
+    description: str
+    location: Optional[str] = None  # e.g., "Building Pad", "Foundation"
+    status: str  # e.g., "QA Verification Required", "QA Concurs Corrected"
+    date_issued: Optional[date] = None
+    age_days: Optional[int] = None
+    staff: Optional[str] = None  # Assigned staff member
+
+    @property
+    def is_open(self) -> bool:
+        """Check if this deficiency is still open."""
+        return "Corrected" not in self.status and "Closed" not in self.status
+
+    @property
+    def procore_status(self) -> str:
+        """Map RMS status to Procore observation status."""
+        status_lower = self.status.lower()
+        if "corrected" in status_lower or "closed" in status_lower:
+            return "closed"
+        if "verification" in status_lower:
+            return "ready_for_review"
+        return "open"
+
+
+class RMSDeficiencyParseResult(BaseModel):
+    """Result of parsing RMS QAQC Deficiencies report."""
+
+    deficiencies: list[RMSDeficiency]
+    project_name: Optional[str] = None
+    report_date: Optional[date] = None
+
+    # Stats
+    total_count: int
+    open_count: int
+    closed_count: int
+    locations: list[str] = []
+
+    # Validation
+    errors: list[str] = []
+    warnings: list[str] = []

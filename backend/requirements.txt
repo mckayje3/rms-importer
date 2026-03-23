@@ -1,0 +1,27 @@
+# FastAPI and server
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# HTTP client for Procore API
+httpx==0.26.0
+
+# Excel file parsing
+openpyxl==3.1.2
+pandas==2.2.0
+
+# Environment and config
+python-dotenv==1.0.0
+pydantic-settings==2.1.0
+
+# CORS for frontend
+# (included in fastapi)
+
+# OAuth
+authlib==1.3.0
+
+# Fuzzy string matching (for contractor matching)
+rapidfuzz==3.6.1
+
+# Turso/libSQL cloud database
+libsql==0.1.11
