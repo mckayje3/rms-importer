@@ -616,6 +616,7 @@ export default function Home() {
             <div className="text-center">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto mb-4"></div>
               <p className="text-gray-600">Loading project...</p>
+              <p className="text-xs text-gray-400 mt-2">This may take up to a minute for large projects.</p>
             </div>
           </div>
         )}
