@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from services.sync_service import SyncService
-from services.procore_api import ProcoreAPI
+from services.procore_api import ProcoreAPI, RateLimitError
 from models.sync import (
     SyncPlan,
     SyncAnalysisResponse,
@@ -227,8 +227,11 @@ async def execute_sync(
                 if result and "id" in result:
                     created_ids[create.key] = result["id"]
 
-                await asyncio.sleep(1)  # Rate limit: ~3600 calls/hour
+                await asyncio.sleep(2)  # Rate limit protection
 
+            except RateLimitError as e:
+                errors.append(f"Rate limited creating {create.key}: {str(e)}")
+                break  # Stop creating — no point continuing if rate limited
             except Exception as e:
                 errors.append(f"Failed to create {create.key}: {str(e)}")
 
@@ -259,7 +262,11 @@ async def execute_sync(
 
                 await api.update_submittal(project_id, update.procore_id, update_data)
                 updated_keys.append(update.key)
+                await asyncio.sleep(2)  # Rate limit protection
 
+            except RateLimitError as e:
+                errors.append(f"Rate limited updating {update.key}: {str(e)}")
+                break
             except Exception as e:
                 errors.append(f"Failed to update {update.key}: {str(e)}")
 
@@ -283,26 +290,51 @@ async def execute_sync(
                 errors.append(f"File not found: {file_action.filename}")
                 continue
 
-            # Upload to each target submittal
-            uploaded_to_any = False
+            # Resolve target Procore IDs
+            target_ids = []
             for submittal_key in file_action.submittal_keys:
                 procore_id = key_to_procore_id.get(submittal_key)
                 if not procore_id:
                     errors.append(f"No Procore ID for {submittal_key}, skipping file {file_action.filename}")
-                    continue
+                else:
+                    target_ids.append(procore_id)
 
+            if not target_ids:
+                continue
+
+            # Upload file ONCE (steps 1-4: S3 + create doc + get prostore ID)
+            try:
+                prostore_file_id = await api.upload_file(project_id, file_path)
+                await asyncio.sleep(2)  # Rate limit protection
+            except RateLimitError as e:
+                errors.append(f"Rate limited uploading {file_action.filename}: {str(e)}")
+                break  # Stop all uploads
+            except Exception as e:
+                errors.append(f"Failed to upload {file_action.filename}: {str(e)}")
+                continue
+
+            # Attach to ALL target submittals (steps 5-6 only: GET + PATCH each)
+            attached_any = False
+            hit_rate_limit = False
+            for procore_id in target_ids:
                 try:
-                    prostore_id = await api.upload_file_to_submittal(
-                        project_id, procore_id, file_path
+                    await api.attach_file_to_submittal(
+                        project_id, procore_id, prostore_file_id
                     )
-                    if prostore_id:
-                        uploaded_to_any = True
-                    await asyncio.sleep(1)  # Rate limit protection
+                    attached_any = True
+                    await asyncio.sleep(2)  # Rate limit protection
+                except RateLimitError as e:
+                    errors.append(f"Rate limited attaching {file_action.filename}: {str(e)}")
+                    hit_rate_limit = True
+                    break
                 except Exception as e:
-                    errors.append(f"Failed to upload {file_action.filename} to {submittal_key}: {str(e)}")
+                    errors.append(f"Failed to attach {file_action.filename} to submittal {procore_id}: {str(e)}")
 
-            if uploaded_to_any:
+            if attached_any:
                 uploaded_files[file_action.filename] = 1  # Track as uploaded
+
+            if hit_rate_limit:
+                break  # Stop all uploads
 
     # Flag deleted items
     flagged_count = 0
@@ -337,13 +369,35 @@ async def execute_sync(
         summary=plan.summary,
     )
 
+    # Determine status
+    was_rate_limited = api.rate_limit_hits > 0
+    rate_limit_errors = [e for e in errors if "Rate limited" in e]
+    other_errors = [e for e in errors if "Rate limited" not in e]
+
+    if rate_limit_errors and not other_errors:
+        status = "rate_limited"
+    elif errors:
+        status = "partial"
+    else:
+        status = "completed"
+
+    rate_limit_msg = None
+    if was_rate_limited:
+        rate_limit_msg = (
+            f"Hit Procore rate limit {api.rate_limit_hits} time(s). "
+            f"{len(rate_limit_errors)} operation(s) failed after retries. "
+            "Run sync again to resume where it left off."
+        )
+
     return SyncExecuteResponse(
-        status="completed" if not errors else "partial",
+        status=status,
         created=len(created_ids),
         updated=len(updated_keys),
         files_uploaded=len(uploaded_files),
         flagged=flagged_count,
         errors=errors,
+        rate_limited=was_rate_limited,
+        rate_limit_message=rate_limit_msg,
         baseline_updated=True,
     )
 

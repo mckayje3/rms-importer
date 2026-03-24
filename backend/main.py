@@ -13,10 +13,15 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS middleware for frontend
+# CORS middleware for frontend (includes Procore for embedded app context)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url, "http://localhost:3000"],
+    allow_origins=[
+        settings.frontend_url,
+        "http://localhost:3000",
+        "https://app.procore.com",
+        "https://us02.procore.com",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

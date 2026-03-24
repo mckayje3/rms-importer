@@ -1,5 +1,6 @@
 """Procore API client service."""
 import httpx
+import logging
 from typing import Optional
 import asyncio
 
@@ -17,15 +18,26 @@ from models.procore import (
 )
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
+
+
+class RateLimitError(Exception):
+    """Raised when Procore rate limit is exceeded after all retries."""
+    pass
 
 
 class ProcoreAPI:
     """Client for Procore REST API."""
 
+    # Rate limit retry config
+    MAX_RETRIES = 3
+    RETRY_DELAYS = [30, 60, 120]  # seconds: 30s, 1min, 2min backoff
+
     def __init__(self, access_token: str, company_id: Optional[int] = None):
         self.access_token = access_token
         self.company_id = company_id
         self.base_url = settings.procore_base_url
+        self.rate_limit_hits = 0  # Track how many 429s we've hit
 
     def _headers(self) -> dict:
         """Get request headers."""
@@ -34,17 +46,54 @@ class ProcoreAPI:
             headers["Procore-Company-Id"] = str(self.company_id)
         return headers
 
+    async def _request_with_retry(
+        self,
+        method: str,
+        endpoint: str,
+        **kwargs,
+    ) -> httpx.Response:
+        """
+        Make an HTTP request with automatic retry on 429 rate limit errors.
+
+        Retries with increasing backoff (30s, 60s, 120s).
+        Raises RateLimitError if all retries are exhausted.
+        """
+        url = f"{self.base_url}{endpoint}"
+
+        for attempt in range(self.MAX_RETRIES + 1):
+            async with httpx.AsyncClient() as client:
+                request_method = getattr(client, method)
+                response = await request_method(url, **kwargs)
+
+                if response.status_code != 429:
+                    response.raise_for_status()
+                    return response
+
+                # Rate limited
+                self.rate_limit_hits += 1
+
+                if attempt < self.MAX_RETRIES:
+                    delay = self.RETRY_DELAYS[attempt]
+                    logger.warning(
+                        f"Rate limited (429) on {method.upper()} {endpoint}, "
+                        f"retry {attempt + 1}/{self.MAX_RETRIES} in {delay}s"
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    raise RateLimitError(
+                        f"Rate limit exceeded after {self.MAX_RETRIES} retries "
+                        f"on {method.upper()} {endpoint}"
+                    )
+
     async def _get(self, endpoint: str, params: Optional[dict] = None) -> dict | list:
-        """Make GET request to Procore API."""
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{self.base_url}{endpoint}",
-                headers=self._headers(),
-                params=params,
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            return response.json()
+        """Make GET request to Procore API with rate limit retry."""
+        response = await self._request_with_retry(
+            "get", endpoint,
+            headers=self._headers(),
+            params=params,
+            timeout=30.0,
+        )
+        return response.json()
 
     async def _get_paginated(
         self, endpoint: str, params: Optional[dict] = None, per_page: int = 100
@@ -69,33 +118,29 @@ class ProcoreAPI:
                 break
 
             page += 1
-            await asyncio.sleep(0.1)  # Rate limit protection
+            await asyncio.sleep(0.5)  # Rate limit protection
 
         return all_items
 
     async def _post(self, endpoint: str, data: dict) -> dict:
-        """Make POST request to Procore API."""
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{self.base_url}{endpoint}",
-                headers={**self._headers(), "Content-Type": "application/json"},
-                json=data,
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            return response.json()
+        """Make POST request to Procore API with rate limit retry."""
+        response = await self._request_with_retry(
+            "post", endpoint,
+            headers={**self._headers(), "Content-Type": "application/json"},
+            json=data,
+            timeout=30.0,
+        )
+        return response.json()
 
     async def _patch(self, endpoint: str, data: dict) -> dict:
-        """Make PATCH request to Procore API."""
-        async with httpx.AsyncClient() as client:
-            response = await client.patch(
-                f"{self.base_url}{endpoint}",
-                headers={**self._headers(), "Content-Type": "application/json"},
-                json=data,
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            return response.json()
+        """Make PATCH request to Procore API with rate limit retry."""
+        response = await self._request_with_retry(
+            "patch", endpoint,
+            headers={**self._headers(), "Content-Type": "application/json"},
+            json=data,
+            timeout=30.0,
+        )
+        return response.json()
 
     # === Company & Project Methods ===
 
@@ -187,25 +232,22 @@ class ProcoreAPI:
 
     # === File Upload Methods ===
 
-    async def upload_file_to_submittal(
+    async def upload_file(
         self,
         project_id: int,
-        submittal_id: int,
         file_path: str,
         upload_folder_id: Optional[int] = None,
-    ) -> Optional[int]:
+    ) -> int:
         """
-        Upload a file and attach it to a submittal.
+        Upload a file to Procore and return its prostore_file_id.
 
-        6-step Procore upload process:
+        Steps 1-4 of the Procore upload process:
         1. Create upload → get S3 presigned URL
         2. Upload file bytes to S3
         3. Create document in project
         4. Get prostore_file_id from document
-        5. Get existing attachments on submittal
-        6. PATCH submittal with all attachment IDs
 
-        Returns prostore_file_id on success, None on failure.
+        Returns prostore_file_id. Call attach_file_to_submittal() to attach it.
         """
         import os
         import mimetypes
@@ -232,7 +274,6 @@ class ProcoreAPI:
         # Step 2: Upload to S3
         file_bytes = open(file_path, "rb").read()
         async with httpx.AsyncClient() as client:
-            # Build multipart form data with S3 fields
             files = {"file": (filename, file_bytes, content_type)}
             data = {k: str(v) for k, v in upload_info["fields"].items()}
 
@@ -272,21 +313,60 @@ class ProcoreAPI:
         if not doc or not doc.get("file", {}).get("current_version", {}).get("prostore_file"):
             raise Exception(f"Could not get prostore_file_id for document {doc_id}")
 
-        prostore_file_id = doc["file"]["current_version"]["prostore_file"]["id"]
+        return doc["file"]["current_version"]["prostore_file"]["id"]
 
-        # Step 5: Get existing attachments on submittal
+    async def attach_file_to_submittal(
+        self,
+        project_id: int,
+        submittal_id: int,
+        prostore_file_id: int,
+    ) -> None:
+        """
+        Attach an already-uploaded file to a submittal.
+
+        Steps 5-6 only: GET existing attachments, PATCH to add the new one.
+        Uses 2 API calls vs 6 for a full upload.
+        """
+        # Get existing attachments
         submittal = await self._get(
             f"/rest/v1.0/projects/{project_id}/submittals/{submittal_id}"
         )
         existing_ids = [att["id"] for att in submittal.get("attachments", [])]
+
+        # Skip if already attached
+        if prostore_file_id in existing_ids:
+            return
+
         all_ids = existing_ids + [prostore_file_id]
 
-        # Step 6: Attach to submittal
+        # Attach
         await self._patch(
             f"/rest/v1.1/projects/{project_id}/submittals/{submittal_id}",
             {"submittal": {"prostore_file_ids": all_ids}},
         )
 
+    async def upload_file_to_submittal(
+        self,
+        project_id: int,
+        submittal_id: int,
+        file_path: str,
+        upload_folder_id: Optional[int] = None,
+    ) -> Optional[int]:
+        """
+        Upload a file and attach it to a single submittal.
+
+        Convenience method that combines upload_file() + attach_file_to_submittal().
+        For multi-item transmittals, use upload_file() once then
+        attach_file_to_submittal() for each target.
+
+        Returns prostore_file_id on success.
+        """
+        prostore_file_id = await self.upload_file(
+            project_id, file_path, upload_folder_id
+        )
+        await self.attach_file_to_submittal(
+            project_id, submittal_id, prostore_file_id
+        )
         return prostore_file_id
 
     # === Specification Methods ===

@@ -124,12 +124,14 @@ class SyncExecuteRequest(BaseModel):
 
 class SyncExecuteResponse(BaseModel):
     """Response from sync execution."""
-    status: str  # "completed", "partial", "failed"
+    status: str  # "completed", "partial", "rate_limited", "failed"
     created: int = 0
     updated: int = 0
     files_uploaded: int = 0
     flagged: int = 0
     errors: list[str] = []
+    rate_limited: bool = False
+    rate_limit_message: Optional[str] = None
     baseline_updated: bool = False
 
 

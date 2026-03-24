@@ -9,7 +9,8 @@ import {
   AnalysisView,
   SyncView,
 } from "@/components";
-import { auth, submittals, sync, health } from "@/lib/api";
+import { auth, projects as projectsApi, submittals, sync, health } from "@/lib/api";
+import { useEmbeddedContext } from "@/lib/useEmbeddedContext";
 import type {
   AppStep,
   ProcoreCompany,
@@ -23,6 +24,7 @@ import type {
 } from "@/types";
 
 export default function Home() {
+  const embedded = useEmbeddedContext();
   const [step, setStep] = useState<AppStep>("auth");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [company, setCompany] = useState<ProcoreCompany | null>(null);
@@ -40,6 +42,7 @@ export default function Home() {
   const [syncAnalysis, setSyncAnalysis] = useState<SyncAnalysisResponse | null>(null);
   const [syncResult, setSyncResult] = useState<SyncExecuteResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [autoSelectingProject, setAutoSelectingProject] = useState(false);
 
   // Check authentication on mount
   useEffect(() => {
@@ -51,12 +54,26 @@ export default function Home() {
         const params = new URLSearchParams(window.location.search);
         if (params.get("auth") === "success") {
           const sessionId = params.get("session_id");
+
+          // If this is a popup window (opened by embedded iframe for OAuth),
+          // send the session back to the opener and close
+          if (window.opener) {
+            if (sessionId) {
+              window.opener.postMessage(
+                { type: "procore-auth-success", sessionId },
+                "*"
+              );
+            }
+            window.close();
+            return;
+          }
+
+          // Standard flow — set auth and continue
           if (sessionId) {
             sessionStorage.setItem("auth_session", sessionId);
           }
           setIsAuthenticated(true);
           setStep("select-project");
-          // Clean up URL
           window.history.replaceState({}, "", "/");
         }
       } catch {
@@ -66,11 +83,103 @@ export default function Home() {
     checkHealth();
   }, []);
 
+  // Auto-select project when embedded with Procore params
+  useEffect(() => {
+    if (
+      !embedded.isEmbedded ||
+      !embedded.projectId ||
+      !embedded.companyId ||
+      !isAuthenticated ||
+      step !== "select-project" ||
+      autoSelectingProject
+    ) return;
+
+    async function autoSelect() {
+      setAutoSelectingProject(true);
+      try {
+        // Fetch companies to find the matching one
+        const companies = await projectsApi.getCompanies();
+        const matchedCompany = companies.find(c => c.id === embedded.companyId);
+        if (!matchedCompany) {
+          setError(`Company ${embedded.companyId} not found in your Procore account`);
+          setAutoSelectingProject(false);
+          return;
+        }
+
+        // Fetch projects to find the matching one
+        const projectList = await projectsApi.getProjects(matchedCompany.id);
+        const matchedProject = projectList.find(p => p.id === embedded.projectId);
+        if (!matchedProject) {
+          setError(`Project ${embedded.projectId} not found in company ${matchedCompany.name}`);
+          setAutoSelectingProject(false);
+          return;
+        }
+
+        // Fetch stats
+        const stats = await projectsApi.getStats(matchedProject.id, matchedCompany.id);
+
+        // Set state and advance to upload step
+        setCompany(matchedCompany);
+        setProject(matchedProject);
+        setProcoreStats(stats);
+        setStep("upload-rms");
+      } catch (err) {
+        setError("Failed to auto-select project from Procore context");
+        console.error(err);
+      } finally {
+        setAutoSelectingProject(false);
+      }
+    }
+    autoSelect();
+  }, [embedded, isAuthenticated, step, autoSelectingProject]);
+
   const handleLogin = async () => {
     try {
       const response = await fetch(auth.getLoginUrl());
       const data = await response.json();
-      window.location.href = data.auth_url;
+
+      if (embedded.isEmbedded) {
+        // Open OAuth in a popup — redirect-based OAuth won't work inside an iframe
+        const width = 600;
+        const height = 700;
+        const left = window.screenX + (window.innerWidth - width) / 2;
+        const top = window.screenY + (window.innerHeight - height) / 2;
+        const popup = window.open(
+          data.auth_url,
+          "procore-auth",
+          `width=${width},height=${height},left=${left},top=${top},popup=yes`
+        );
+
+        // Listen for the OAuth callback to land back on our frontend
+        const handleMessage = (event: MessageEvent) => {
+          if (event.data?.type === "procore-auth-success" && event.data?.sessionId) {
+            sessionStorage.setItem("auth_session", event.data.sessionId);
+            setIsAuthenticated(true);
+            setStep("select-project");
+            window.removeEventListener("message", handleMessage);
+          }
+        };
+        window.addEventListener("message", handleMessage);
+
+        // Fallback: poll for popup close (user may have completed auth)
+        if (popup) {
+          const pollTimer = setInterval(() => {
+            if (popup.closed) {
+              clearInterval(pollTimer);
+              window.removeEventListener("message", handleMessage);
+              // Check if auth was set by the callback page
+              const session = sessionStorage.getItem("auth_session");
+              if (session && !isAuthenticated) {
+                setIsAuthenticated(true);
+                setStep("select-project");
+              }
+            }
+          }, 500);
+        }
+      } else {
+        // Standard redirect flow for standalone mode
+        window.location.href = data.auth_url;
+      }
     } catch {
       setError("Failed to start login flow");
     }
@@ -460,7 +569,7 @@ export default function Home() {
 
             <button
               onClick={() => {
-                setStep("select-project");
+                setStep(embedded.isEmbedded ? "upload-rms" : "select-project");
                 setRmsSession(null);
                 setAnalysis(null);
                 setSelectedMode(null);
@@ -470,7 +579,7 @@ export default function Home() {
               }}
               className="bg-orange-500 text-white px-8 py-3 rounded-lg font-medium hover:bg-orange-600 transition-colors"
             >
-              Import Another Project
+              {embedded.isEmbedded ? "Sync Again" : "Import Another Project"}
             </button>
           </div>
         );
@@ -482,17 +591,35 @@ export default function Home() {
 
   return (
     <div className="min-h-screen">
-      <Header isAuthenticated={isAuthenticated} onLogout={handleLogout} />
+      {!embedded.isEmbedded && (
+        <Header isAuthenticated={isAuthenticated} onLogout={handleLogout} />
+      )}
 
       {isAuthenticated && step !== "auth" && step !== "complete" && (
         <div className="bg-white border-b border-gray-200">
           <div className="max-w-4xl mx-auto">
-            <StepIndicator currentStep={step} />
+            <StepIndicator currentStep={step} isEmbedded={embedded.isEmbedded} />
           </div>
         </div>
       )}
 
-      <main className="max-w-2xl mx-auto px-6 py-8">
+      <main className={`max-w-2xl mx-auto px-6 ${embedded.isEmbedded ? "py-4" : "py-8"}`}>
+        {/* Show project context when embedded */}
+        {embedded.isEmbedded && project && step !== "auth" && step !== "complete" && (
+          <div className="text-sm text-gray-500 mb-4">
+            {company?.name} &rsaquo; {project.name}
+          </div>
+        )}
+
+        {autoSelectingProject && (
+          <div className="flex items-center justify-center py-12">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto mb-4"></div>
+              <p className="text-gray-600">Loading project...</p>
+            </div>
+          </div>
+        )}
+
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
             <p className="text-sm text-red-700">{error}</p>
@@ -505,9 +632,11 @@ export default function Home() {
           </div>
         )}
 
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          {renderStepContent()}
-        </div>
+        {!autoSelectingProject && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            {renderStepContent()}
+          </div>
+        )}
       </main>
     </div>
   );

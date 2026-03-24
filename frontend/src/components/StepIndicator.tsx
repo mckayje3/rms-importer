@@ -13,17 +13,22 @@ const STEPS: { key: AppStep; label: string }[] = [
 
 interface StepIndicatorProps {
   currentStep: AppStep;
+  isEmbedded?: boolean;
 }
 
-export function StepIndicator({ currentStep }: StepIndicatorProps) {
+export function StepIndicator({ currentStep, isEmbedded = false }: StepIndicatorProps) {
   // sync-review maps to the same position as review in the step bar
   const effectiveStep = currentStep === "sync-review" ? "review" : currentStep;
-  const currentIndex = STEPS.findIndex((s) => s.key === effectiveStep);
+  // When embedded, skip "Connect" and "Select Project" steps (handled automatically)
+  const visibleSteps = isEmbedded
+    ? STEPS.filter(s => s.key !== "auth" && s.key !== "select-project")
+    : STEPS;
+  const currentIndex = visibleSteps.findIndex((s) => s.key === effectiveStep);
 
   return (
     <div className="w-full py-4">
       <div className="flex items-center justify-center gap-2">
-        {STEPS.map((step, index) => {
+        {visibleSteps.map((step, index) => {
           const isActive = index === currentIndex;
           const isCompleted = index < currentIndex;
           const isPending = index > currentIndex;
@@ -68,7 +73,7 @@ export function StepIndicator({ currentStep }: StepIndicatorProps) {
                   {step.label}
                 </span>
               </div>
-              {index < STEPS.length - 1 && (
+              {index < visibleSteps.length - 1 && (
                 <div
                   className={`
                     w-12 h-0.5 mx-2 mt-[-16px]
