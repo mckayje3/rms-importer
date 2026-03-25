@@ -5,15 +5,13 @@ import httpx
 import secrets
 
 from config import get_settings
+from database import session_store
 
 router = APIRouter()
 settings = get_settings()
 
-# In-memory store for OAuth state (use Redis in production)
+# In-memory store for OAuth state (short-lived, doesn't need persistence)
 _oauth_states: dict[str, bool] = {}
-
-# In-memory token store (use proper session management in production)
-_tokens: dict[str, dict] = {}
 
 
 @router.get("/login")
@@ -61,9 +59,9 @@ async def callback(code: str = Query(...), state: str = Query(...)):
 
         token_data = response.json()
 
-    # Store token with a session ID
+    # Store token in database
     session_id = secrets.token_urlsafe(32)
-    _tokens[session_id] = token_data
+    session_store.save_session(session_id, token_data)
 
     # Redirect back to frontend with auth success
     return RedirectResponse(
@@ -74,10 +72,10 @@ async def callback(code: str = Query(...), state: str = Query(...)):
 @router.post("/refresh")
 async def refresh_token(session_id: str):
     """Refresh an expired access token."""
-    if session_id not in _tokens:
+    token_data = session_store.get_session(session_id)
+    if not token_data:
         raise HTTPException(status_code=401, detail="Invalid session")
 
-    token_data = _tokens[session_id]
     refresh_token = token_data.get("refresh_token")
 
     if not refresh_token:
@@ -99,7 +97,7 @@ async def refresh_token(session_id: str):
 
         new_token_data = response.json()
 
-    _tokens[session_id] = new_token_data
+    session_store.save_session(session_id, new_token_data)
     return {
         "access_token": new_token_data["access_token"],
         "expires_in": new_token_data.get("expires_in"),
@@ -109,13 +107,13 @@ async def refresh_token(session_id: str):
 @router.post("/logout")
 async def logout(session_id: str):
     """Logout and clear session."""
-    if session_id in _tokens:
-        del _tokens[session_id]
+    session_store.delete_session(session_id)
     return {"status": "logged_out"}
 
 
 def get_token(session_id: str) -> str:
     """Get access token for a session (used by other routers)."""
-    if session_id not in _tokens:
+    token_data = session_store.get_session(session_id)
+    if not token_data:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    return _tokens[session_id]["access_token"]
+    return token_data["access_token"]

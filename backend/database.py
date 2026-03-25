@@ -84,6 +84,16 @@ def init_db():
             )
         """)
 
+        # Sessions table - persistent OAuth token storage
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id TEXT PRIMARY KEY,
+                token_data TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
         # Flagged items - items removed from RMS that need review
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS flagged_items (
@@ -112,6 +122,58 @@ def _row_to_dict(row) -> dict:
         return dict(row)
     # libsql returns tuples — shouldn't reach here with our usage
     return row
+
+
+class SessionStore:
+    """Persistent OAuth session storage."""
+
+    def __init__(self):
+        init_db()
+
+    def save_session(self, session_id: str, token_data: dict) -> None:
+        """Save or update a session with token data."""
+        now = datetime.utcnow().isoformat()
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO sessions (session_id, token_data, created_at, updated_at)
+                VALUES (?, ?, COALESCE(
+                    (SELECT created_at FROM sessions WHERE session_id = ?), ?
+                ), ?)
+            """, (session_id, json.dumps(token_data), session_id, now, now))
+
+    def get_session(self, session_id: str) -> Optional[dict]:
+        """Get token data for a session."""
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT token_data FROM sessions WHERE session_id = ?",
+                (session_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                data = row["token_data"] if hasattr(row, "keys") else row[0]
+                return json.loads(data)
+            return None
+
+    def delete_session(self, session_id: str) -> None:
+        """Delete a session (logout)."""
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM sessions WHERE session_id = ?",
+                (session_id,)
+            )
+
+    def cleanup_old_sessions(self, days: int = 30) -> int:
+        """Remove sessions older than N days."""
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM sessions WHERE updated_at < datetime('now', ?)",
+                (f"-{days} days",)
+            )
+            return cursor.rowcount
 
 
 class BaselineStore:
@@ -322,5 +384,6 @@ class BaselineStore:
             return cursor.rowcount > 0
 
 
-# Global instance
+# Global instances
+session_store = SessionStore()
 baseline_store = BaselineStore()
