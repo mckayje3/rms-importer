@@ -7,6 +7,8 @@ export interface EmbeddedContext {
   projectId: number | null;
   /** Procore company ID from URL params (parameter interpolation) */
   companyId: number | null;
+  /** Raw URL params for debugging embedded context */
+  rawParams: Record<string, string>;
 }
 
 /**
@@ -24,6 +26,7 @@ export function useEmbeddedContext(): EmbeddedContext {
     isEmbedded: false,
     projectId: null,
     companyId: null,
+    rawParams: {},
   });
 
   useEffect(() => {
@@ -32,12 +35,19 @@ export function useEmbeddedContext(): EmbeddedContext {
     const companyId = params.get("procore_company_id");
     const inIframe = window.parent !== window;
 
+    // Capture all URL params for debugging
+    const rawParams: Record<string, string> = {};
+    params.forEach((value, key) => {
+      rawParams[key] = value;
+    });
+
     const hasParams = projectId !== null && companyId !== null;
 
     setContext({
       isEmbedded: hasParams || inIframe,
       projectId: projectId ? Number(projectId) : null,
       companyId: companyId ? Number(companyId) : null,
+      rawParams,
     });
   }, []);
 
