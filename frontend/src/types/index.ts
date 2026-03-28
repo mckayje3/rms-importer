@@ -207,6 +207,7 @@ export interface SyncExecuteResponse {
 export type AppStep =
   | "auth"
   | "select-project"
+  | "project-setup"
   | "upload-rms"
   | "analyze"
   | "sync-review"
@@ -222,4 +223,36 @@ export interface AppState {
   rmsSession: RMSSession | null;
   analysis: AnalyzeResponse | null;
   selectedMode: ImportMode | null;
+}
+
+// Project Setup Types
+export interface ProcoreCustomField {
+  id: number;
+  label: string;
+  data_type: string;
+  field_key: string;
+}
+
+export interface ProjectConfigData {
+  status_mode: "qa_code" | "rms_status";
+  status_map: Record<string, string>;
+  sd_type_map: Record<string, string>;
+  custom_fields: Record<string, string>;
+  setup_completed: boolean;
+}
+
+export interface ProjectDiscovery {
+  custom_fields: ProcoreCustomField[];
+  statuses: string[];
+  has_existing_config: boolean;
+  existing_config: ProjectConfigData | null;
+  suggested_config: ProjectConfigData;
+}
+
+export interface ProjectConfig {
+  project_id: string;
+  company_id: string;
+  config_data: ProjectConfigData;
+  created_at: string;
+  updated_at: string;
 }

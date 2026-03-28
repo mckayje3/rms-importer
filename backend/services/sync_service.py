@@ -3,6 +3,7 @@ from typing import Optional
 from datetime import date
 
 from models.rms import RMSParseResult, RMSSubmittal, TransmittalLogEntry, TransmittalReportEntry
+from models.mappings import map_status, map_status_for_config
 from models.sync import (
     SyncMode,
     SyncPlan,
@@ -22,6 +23,7 @@ from database import baseline_store
 TRACKED_FIELDS = [
     "title",
     "type",
+    "status",
     "paragraph",
     "qa_code",
     "qc_code",
@@ -36,9 +38,10 @@ TRACKED_FIELDS = [
 class SyncService:
     """Service for syncing RMS data to Procore."""
 
-    def __init__(self, project_id: str, company_id: str):
+    def __init__(self, project_id: str, company_id: str, config: dict | None = None):
         self.project_id = project_id
         self.company_id = company_id
+        self.config = config
 
     def get_baseline_info(self) -> BaselineInfo:
         """Get info about stored baseline."""
@@ -231,6 +234,9 @@ class SyncService:
             new_str = self._normalize_value(new_val)
 
             if old_str != new_str:
+                # Skip status changes when new value is None (no QA code = leave unchanged)
+                if field == "status" and new_val is None:
+                    continue
                 changes.append(FieldChange(
                     field=field,
                     old_value=old_val,
@@ -312,7 +318,7 @@ class SyncService:
                 qa_code=qa_code,
                 qc_code=sub.qc_code,
                 info=info_lookup.get(info_key),
-                status=sub.procore_status,
+                status=map_status_for_config(qa_code, sub.status, self.config),
                 contractor_prepared=trans_entry.contractor_prepared.isoformat() if trans_entry and trans_entry.contractor_prepared else None,
                 government_received=trans_entry.government_received.isoformat() if trans_entry and trans_entry.government_received else None,
                 government_returned=trans_entry.government_returned.isoformat() if trans_entry and trans_entry.government_returned else None,
@@ -334,6 +340,7 @@ class SyncService:
                     )
 
                     if orig:
+                        rev_qa = qa_lookup.get(key)
                         result[key] = StoredSubmittal(
                             section=entry.section,
                             item_no=item_no,
@@ -341,10 +348,10 @@ class SyncService:
                             title=orig.description,
                             type=orig.procore_type,
                             paragraph=None,
-                            qa_code=qa_lookup.get(key),
+                            qa_code=rev_qa,
                             qc_code=None,
                             info=info_lookup.get(info_key),
-                            status=None,
+                            status=map_status_for_config(rev_qa, None, self.config),
                             contractor_prepared=entry.contractor_prepared.isoformat() if entry.contractor_prepared else None,
                             government_received=entry.government_received.isoformat() if entry.government_received else None,
                             government_returned=entry.government_returned.isoformat() if entry.government_returned else None,

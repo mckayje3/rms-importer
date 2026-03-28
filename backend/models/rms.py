@@ -27,8 +27,8 @@ class RMSSubmittal(BaseModel):
     @computed_field
     @property
     def procore_status(self) -> Optional[str]:
-        """Map RMS status to Procore status."""
-        return map_status(self.status)
+        """Map QA code to Procore status. Returns None if no QA code (leave unchanged)."""
+        return map_status(self.qa_code)
 
     @computed_field
     @property

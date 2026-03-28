@@ -19,6 +19,7 @@ from models.sync import (
 from routers.rms_upload import get_rms_data
 from routers.auth import get_token
 from database import baseline_store
+from database import project_config_store
 from config import get_settings
 
 router = APIRouter()
@@ -138,8 +139,12 @@ async def execute_sync(
             detail="RMS session not found. Upload RMS files first.",
         )
 
+    # Load project-specific config (falls back to defaults if not configured)
+    _project_config = project_config_store.get_config(str(project_id))
+    _config_data = _project_config["config_data"] if _project_config else None
+
     # Create services
-    sync_service = SyncService(str(project_id), str(company_id))
+    sync_service = SyncService(str(project_id), str(company_id), config=_config_data)
     api = ProcoreAPI(access_token, company_id=company_id)
 
     # Build file list for plan generation
@@ -162,9 +167,18 @@ async def execute_sync(
     errors: list[str] = []
 
     # Execute creates
-    # Custom field IDs for Procore
-    PARAGRAPH_FIELD = "custom_field_598134325870420"
-    INFO_FIELD = "custom_field_598134325871364"
+
+    # Custom field IDs — from project config or Dobbins defaults
+    PARAGRAPH_FIELD = (
+        _config_data["custom_fields"]["paragraph"]
+        if _config_data and "custom_fields" in _config_data and "paragraph" in _config_data["custom_fields"]
+        else "custom_field_598134325870420"
+    )
+    INFO_FIELD = (
+        _config_data["custom_fields"]["info"]
+        if _config_data and "custom_fields" in _config_data and "info" in _config_data["custom_fields"]
+        else "custom_field_598134325871364"
+    )
 
     # Procore submittal type name -> id mapping (fetched lazily)
     type_id_cache: dict[str, int] = {}
