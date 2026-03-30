@@ -1,16 +1,17 @@
 """Field mappings between RMS and Procore."""
 
 # Status mapping mode: "qa_code" or "rms_status"
-# QA Code -> Procore status (default)
+# QA Code -> Procore status with name and ID
+# These are the Dobbins custom statuses configured in Procore Company Admin
 QA_STATUS_MAP = {
-    "a": "closed",
-    "b": "closed",
-    "c": "open",
-    "d": "open",
-    "e": "open",
-    "f": "closed",
-    "g": "open",
-    "x": "closed",
+    "a": {"name": "A - Approved as submitted", "id": 598134326473636},
+    "b": {"name": "B - Approved, except as noted on drawings", "id": 598134326473637},
+    "c": {"name": "C - Approved, except as noted; resubmission required", "id": 598134326473638},
+    "d": {"name": "D - Returned by separate correspondence", "id": 598134326473639},
+    "e": {"name": "E - Dissapproved (see attached)", "id": 598134326473640},
+    "f": {"name": "F - Receipt acknowledged", "id": 598134326473641},
+    "g": {"name": "G - Other (specify)", "id": 598134326473642},
+    "x": {"name": "X - Receipt acknowledged, does not comply with requirements", "id": 598134326473643},
 }
 
 # RMS Status -> Procore status (legacy)
@@ -36,36 +37,46 @@ SD_TYPE_MAP = {
 }
 
 
-def map_status(qa_code: str | None) -> str | None:
-    """Map QA code to Procore status (default/qa_code mode).
+def _resolve_status_entry(entry) -> dict | None:
+    """Resolve a status map entry to a dict with 'name' and optionally 'id'.
 
-    Args:
-        qa_code: QA code from RMS (e.g., "A", "B", "C", "D", "E", "F", "G", "X")
+    Handles both new format (dict with name/id) and legacy format (plain string).
+    """
+    if entry is None:
+        return None
+    if isinstance(entry, dict):
+        return entry
+    # Legacy plain string format (e.g., "open", "closed")
+    return {"name": str(entry)}
+
+
+def map_status(qa_code: str | None) -> str | None:
+    """Map QA code to Procore status name (default/qa_code mode).
 
     Returns:
-        Procore status ("open" or "closed") or None if no QA code
+        Procore status name or None if no QA code
     """
     if not qa_code:
         return None
 
     normalized = qa_code.strip().lower()
-    return QA_STATUS_MAP.get(normalized)
+    entry = QA_STATUS_MAP.get(normalized)
+    return _resolve_status_entry(entry).get("name") if entry else None
 
 
 def map_status_rms(rms_status: str | None) -> str | None:
-    """Map RMS status to Procore status (rms_status mode).
-
-    Args:
-        rms_status: Status from RMS (e.g., "Outstanding", "Complete", "In Review")
+    """Map RMS status to Procore status name (rms_status mode).
 
     Returns:
-        Procore status (e.g., "Draft", "Closed", "Open") or original if no mapping
+        Procore status name or None if no mapping
     """
     if not rms_status:
         return None
 
     normalized = rms_status.strip().lower()
-    return RMS_STATUS_MAP.get(normalized, rms_status)
+    entry = RMS_STATUS_MAP.get(normalized, rms_status)
+    resolved = _resolve_status_entry(entry)
+    return resolved.get("name") if resolved else None
 
 
 def map_status_for_config(
@@ -75,13 +86,8 @@ def map_status_for_config(
 ) -> str | None:
     """Map status using the project's configured mode.
 
-    Args:
-        qa_code: QA code from RMS
-        rms_status: RMS status field
-        config: Project config dict (with status_mode and status_map keys)
-
-    Returns:
-        Procore status or None if source value is missing
+    Returns the status name string for storage/comparison.
+    Use get_status_id_for_qa_code() to get the numeric ID for Procore API calls.
     """
     mode = "qa_code"
     status_map = QA_STATUS_MAP
@@ -95,13 +101,37 @@ def map_status_for_config(
         if not rms_status:
             return None
         normalized = rms_status.strip().lower()
-        return status_map.get(normalized, rms_status)
+        entry = status_map.get(normalized, rms_status)
+        resolved = _resolve_status_entry(entry)
+        return resolved.get("name") if resolved else None
     else:
         # qa_code mode
         if not qa_code:
             return None
         normalized = qa_code.strip().lower()
-        return status_map.get(normalized)
+        entry = status_map.get(normalized)
+        return _resolve_status_entry(entry).get("name") if entry else None
+
+
+def get_status_id(status_name: str | None, config: dict | None = None) -> int | None:
+    """Look up the Procore status_id for a given status name.
+
+    Searches the configured status map for a matching name and returns its ID.
+    Used when building Procore API payloads that require status_id.
+    """
+    if not status_name:
+        return None
+
+    status_map = QA_STATUS_MAP
+    if config and "status_map" in config:
+        status_map = config["status_map"]
+
+    for entry in status_map.values():
+        resolved = _resolve_status_entry(entry)
+        if resolved and resolved.get("name") == status_name and "id" in resolved:
+            return resolved["id"]
+
+    return None
 
 
 def map_sd_to_type(sd_no: str | None) -> str | None:

@@ -37,7 +37,7 @@ async def discover_project(
     api = ProcoreAPI(access_token, company_id=company_id)
 
     # Fetch custom fields and statuses from Procore
-    custom_fields = await api.get_configurable_field_sets(project_id)
+    custom_fields = await api.get_custom_fields_for_submittals(project_id)
     statuses = await api.get_submittal_statuses(project_id)
 
     # Check if config already exists

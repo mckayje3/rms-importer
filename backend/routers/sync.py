@@ -1,6 +1,7 @@
 """Sync endpoints for incremental RMS to Procore updates."""
 import os
 import asyncio
+import logging
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
@@ -21,8 +22,10 @@ from routers.auth import get_token
 from database import baseline_store
 from database import project_config_store
 from config import get_settings
+from models.mappings import get_status_id
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class AnalyzeRequest(BaseModel):
@@ -93,12 +96,14 @@ async def analyze_sync(
                 and not f.startswith("~$")
             ]
 
-    import logging
-    logger = logging.getLogger(__name__)
     logger.warning(f"Sync analyze: session has {rms_data.submittal_count} submittals, {len(rms_data.transmittal_entries)} log entries, {len(rms_data.transmittal_report)} report entries")
 
+    # Load project config for status mapping
+    _project_config = project_config_store.get_config(str(project_id))
+    _config_data = _project_config["config_data"] if _project_config else None
+
     # Create sync service and analyze
-    service = SyncService(str(project_id), str(request.company_id))
+    service = SyncService(str(project_id), str(request.company_id), config=_config_data)
     baseline_info = service.get_baseline_info()
     plan = service.analyze(rms_data, file_list)
 
@@ -261,8 +266,14 @@ async def execute_sync(
                     field = change.field
                     value = change.new_value
 
-                    # Map field names to Procore API fields
-                    if field in ["qa_code", "qc_code", "info"]:
+                    if field == "status":
+                        # Status requires status_id for the Procore API
+                        status_id = get_status_id(value, _config_data)
+                        if status_id:
+                            update_data["status_id"] = status_id
+                        else:
+                            logger.warning(f"No status_id found for '{value}' on {update.key}, skipping status update")
+                    elif field in ["qa_code", "qc_code", "info"]:
                         # Custom fields
                         custom_fields[field] = value
                     elif field == "contractor_prepared":

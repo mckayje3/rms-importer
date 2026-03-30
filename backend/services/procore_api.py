@@ -230,74 +230,82 @@ class ProcoreAPI:
             {"submittal": submittal_data},
         )
 
-    async def get_configurable_field_sets(self, project_id: int) -> list[dict]:
+    async def get_custom_fields_for_submittals(self, project_id: int) -> list[dict]:
         """
-        Get custom fields configured on submittals for a project.
+        Get custom fields configured on submittals for the company.
 
-        Returns list of custom field definitions with id, label, and data_type.
-        Procore endpoint: GET /rest/v1.0/projects/{project_id}/submittals/configurable_field_sets
+        Uses the company-level custom fields endpoint filtered by tool_name=submittals.
+        Returns list of custom field definitions with id, label, and field_type.
         """
         try:
             result = await self._get(
-                f"/rest/v1.0/projects/{project_id}/submittals/configurable_field_sets"
+                f"/rest/v1.0/companies/{self.company_id}/custom_fields",
+                params={"tool_name": "submittals"},
             )
-            # The response contains field sets with configurable fields
-            # Extract individual custom fields from the response
             custom_fields = []
             if isinstance(result, list):
-                for field_set in result:
-                    for cf in field_set.get("custom_fields", []):
-                        custom_fields.append({
-                            "id": cf.get("custom_field_definition_id"),
-                            "label": cf.get("label", ""),
-                            "data_type": cf.get("data_type", "string"),
-                            "field_key": f"custom_field_{cf.get('custom_field_definition_id', '')}",
-                        })
-            elif isinstance(result, dict):
-                for cf in result.get("custom_fields", []):
+                for cf in result:
+                    cf_id = cf.get("id")
                     custom_fields.append({
-                        "id": cf.get("custom_field_definition_id"),
+                        "id": cf_id,
                         "label": cf.get("label", ""),
-                        "data_type": cf.get("data_type", "string"),
-                        "field_key": f"custom_field_{cf.get('custom_field_definition_id', '')}",
+                        "data_type": cf.get("field_type", "string"),
+                        "field_key": f"custom_field_{cf_id}" if cf_id else "",
                     })
             return custom_fields
         except Exception as e:
-            logger.warning(f"Failed to fetch configurable field sets: {e}")
+            logger.warning(f"Failed to fetch custom fields for submittals: {e}")
             return []
 
-    async def get_submittal_statuses(self, project_id: int) -> list[str]:
+    async def get_submittal_statuses(self, project_id: int) -> list[dict]:
         """
         Get available submittal statuses for a project.
 
-        Extracts from existing submittals and includes Procore defaults.
+        Tries the settings endpoint first, then falls back to scanning
+        a sample of existing submittals. Returns list of dicts with 'name' and 'id'.
         """
-        # Known Procore default submittal statuses
-        default_statuses = ["Draft", "Open", "Closed"]
+        default_statuses = [
+            {"name": "Draft", "id": None},
+            {"name": "Open", "id": None},
+            {"name": "Closed", "id": None},
+        ]
 
         try:
-            # Fetch a sample of submittals to discover statuses in use
-            submittals = await self.get_submittals(project_id)
-            found_statuses = set()
-            for sub in submittals:
-                if hasattr(sub, 'status') and sub.status:
-                    found_statuses.add(sub.status)
-                # Also check the raw dict if it's a dict
-                elif isinstance(sub, dict) and sub.get('status'):
-                    status = sub['status']
-                    if isinstance(status, dict):
-                        found_statuses.add(status.get('status', ''))
-                    else:
-                        found_statuses.add(str(status))
-
-            # Merge defaults with discovered statuses
-            all_statuses = set(default_statuses) | found_statuses
-            # Remove empty strings
-            all_statuses.discard("")
-            return sorted(all_statuses)
+            # Try settings endpoint for status configuration
+            settings = await self._get(
+                f"/rest/v1.0/projects/{project_id}/submittals/settings"
+            )
+            if isinstance(settings, dict) and "statuses" in settings:
+                statuses = []
+                for s in settings["statuses"]:
+                    statuses.append({
+                        "name": s.get("name", ""),
+                        "id": s.get("id"),
+                    })
+                if statuses:
+                    return statuses
         except Exception as e:
-            logger.warning(f"Failed to fetch submittal statuses: {e}")
-            return default_statuses
+            logger.warning(f"Settings endpoint failed, scanning submittals: {e}")
+
+        try:
+            # Fallback: scan raw submittal data to discover statuses with IDs
+            raw_data = await self._get_paginated(
+                f"/rest/v1.0/projects/{project_id}/submittals"
+            )
+            found = {}
+            for sub in raw_data:
+                status = sub.get("status")
+                if isinstance(status, dict):
+                    name = status.get("name") or status.get("status", "")
+                    sid = status.get("id")
+                    if name and name not in found:
+                        found[name] = {"name": name, "id": sid}
+            if found:
+                return sorted(found.values(), key=lambda s: s["name"])
+        except Exception as e:
+            logger.warning(f"Failed to scan submittals for statuses: {e}")
+
+        return default_statuses
 
     # === File Upload Methods ===
 
