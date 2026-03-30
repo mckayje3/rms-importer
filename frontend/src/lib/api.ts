@@ -300,6 +300,20 @@ export const sync = {
       }),
     });
   },
+
+  bootstrap: async (
+    projectId: number,
+    sessionId: string,
+    companyId: number
+  ): Promise<{ status: string; matched: number; unmatched: number; total_rms: number; total_procore: number }> => {
+    return fetchAPI(`/sync/projects/${projectId}/bootstrap`, {
+      method: "POST",
+      body: JSON.stringify({
+        session_id: sessionId,
+        company_id: companyId,
+      }),
+    });
+  },
 };
 
 // Setup endpoints

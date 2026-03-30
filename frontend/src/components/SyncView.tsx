@@ -56,6 +56,7 @@ interface SyncViewProps {
   baseline: BaselineInfo;
   plan: SyncPlan;
   onExecute: (options: { creates: boolean; updates: boolean; files: boolean }) => void;
+  onBootstrap?: () => Promise<void>;
   onCancel: () => void;
   isExecuting: boolean;
 }
@@ -78,6 +79,7 @@ export function SyncView({
   baseline,
   plan,
   onExecute,
+  onBootstrap,
   onCancel,
   isExecuting,
 }: SyncViewProps) {
@@ -85,6 +87,7 @@ export function SyncView({
   const [applyCreates, setApplyCreates] = useState(true);
   const [applyUpdates, setApplyUpdates] = useState(true);
   const [applyFiles, setApplyFiles] = useState(true);
+  const [bootstrapping, setBootstrapping] = useState(false);
 
   const toggleSection = (section: string) => {
     setExpandedSection(expandedSection === section ? null : section);
@@ -142,6 +145,35 @@ export function SyncView({
           </p>
         )}
       </div>
+
+      {/* Bootstrap warning for full migration when project already has data */}
+      {plan.mode === "full_migration" && onBootstrap && (
+        <div className="bg-amber-50 border border-amber-300 rounded-lg p-4">
+          <h3 className="text-sm font-bold text-amber-800 mb-2">
+            Existing Project Detected
+          </h3>
+          <p className="text-sm text-amber-700 mb-3">
+            No baseline exists, so the sync wants to create {plan.creates.length} submittals.
+            If this project was already migrated (e.g. via PowerShell scripts), you should
+            <strong> bootstrap the baseline</strong> first. This matches your RMS data against
+            existing Procore submittals without creating or modifying anything.
+          </p>
+          <button
+            onClick={async () => {
+              setBootstrapping(true);
+              try {
+                await onBootstrap();
+              } finally {
+                setBootstrapping(false);
+              }
+            }}
+            disabled={bootstrapping}
+            className="bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-700 disabled:opacity-50"
+          >
+            {bootstrapping ? "Bootstrapping..." : "Bootstrap Baseline"}
+          </button>
+        </div>
+      )}
 
       {/* Sync Plan Summary */}
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">

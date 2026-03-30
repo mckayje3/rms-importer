@@ -410,6 +410,14 @@ export default function Home() {
               baseline={syncAnalysis.baseline}
               plan={syncAnalysis.plan}
               onExecute={handleSyncExecute}
+              onBootstrap={async () => {
+                if (!project || !company || !rmsSession) return;
+                const result = await sync.bootstrap(project.id, rmsSession.session_id, company.id);
+                alert(`Baseline bootstrapped: ${result.matched} matched, ${result.unmatched} unmatched out of ${result.total_rms} RMS submittals.`);
+                // Re-analyze with the new baseline
+                const syncResult = await sync.analyze(project.id, rmsSession.session_id, company.id);
+                setSyncAnalysis(syncResult);
+              }}
               onCancel={() => setStep("upload-rms")}
               isExecuting={importing}
             />
