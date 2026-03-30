@@ -232,56 +232,49 @@ class ProcoreAPI:
 
     async def get_custom_fields_for_submittals(self, project_id: int) -> list[dict]:
         """
-        Get custom fields configured on submittals for the company.
+        Discover custom fields on submittals by reading a submittal detail.
 
-        Tries multiple endpoint variants since Procore has changed the path:
-        1. /rest/v1.0/companies/{id}/custom_field_definitions (current documented endpoint)
-        2. /rest/v1.1/companies/{id}/custom_field_definitions (v1.1 variant)
-        3. /rest/v1.0/companies/{id}/custom_fields (legacy, was returning 404)
-
-        Returns list of custom field definitions with id, label, and field_type.
+        The company-level custom field definition endpoints require elevated
+        permissions not available with user OAuth tokens. Instead, we fetch
+        a single submittal's detail which includes its custom_fields with
+        field IDs and labels.
         """
-        endpoints = [
-            f"/rest/v1.0/companies/{self.company_id}/custom_field_definitions",
-            f"/rest/v1.1/companies/{self.company_id}/custom_field_definitions",
-            f"/rest/v1.0/companies/{self.company_id}/custom_fields",
-        ]
+        try:
+            # Fetch one submittal to inspect its custom fields
+            subs = await self._get(
+                f"/rest/v1.0/projects/{project_id}/submittals",
+                params={"per_page": 1},
+            )
+            if not subs:
+                logger.warning("No submittals found to discover custom fields from")
+                return []
 
-        for endpoint in endpoints:
-            try:
-                logger.warning(f"Trying custom fields endpoint: {endpoint}")
-                result = await self._get(
-                    endpoint,
-                    params={"tool_name": "submittals"},
-                )
-                logger.warning(
-                    f"Custom fields response from {endpoint}: "
-                    f"type={type(result).__name__}, "
-                    f"len={len(result) if isinstance(result, list) else 'N/A'}"
-                )
-                if isinstance(result, list) and result:
-                    logger.warning(f"First custom field entry keys: {list(result[0].keys())}")
-                elif isinstance(result, dict) and result:
-                    logger.warning(f"Custom field dict keys: {list(result.keys())}")
+            # Get the full detail (list endpoint may not include custom fields)
+            sub_id = subs[0]["id"]
+            detail = await self._get(
+                f"/rest/v1.0/projects/{project_id}/submittals/{sub_id}"
+            )
 
-                # Parse response
-                items = result if isinstance(result, list) else []
-                custom_fields = []
-                for cf in items:
-                    cf_id = cf.get("id")
+            custom_fields_data = detail.get("custom_fields", {})
+            logger.warning(f"Discovered custom fields from submittal {sub_id}: {list(custom_fields_data.keys())}")
+
+            custom_fields = []
+            for field_key, field_data in custom_fields_data.items():
+                # field_key is like "custom_field_598134325870420"
+                # field_data has "value", "label", "data_type", etc.
+                if isinstance(field_data, dict):
+                    cf_id = field_data.get("id") or field_key.replace("custom_field_", "")
                     custom_fields.append({
                         "id": cf_id,
-                        "label": cf.get("label", cf.get("name", "")),
-                        "data_type": cf.get("field_type", cf.get("data_type", "string")),
-                        "field_key": f"custom_field_{cf_id}" if cf_id else "",
+                        "label": field_data.get("label", field_key),
+                        "data_type": field_data.get("data_type", "string"),
+                        "field_key": field_key,
                     })
-                return custom_fields
-            except Exception as e:
-                logger.warning(f"Endpoint {endpoint} failed: {e}")
-                continue
 
-        logger.warning("All custom field endpoints failed")
-        return []
+            return custom_fields
+        except Exception as e:
+            logger.warning(f"Failed to discover custom fields from submittal: {e}")
+            return []
 
     async def get_submittal_statuses(self, project_id: int) -> list[dict]:
         """
