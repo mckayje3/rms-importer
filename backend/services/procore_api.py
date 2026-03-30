@@ -230,14 +230,24 @@ class ProcoreAPI:
             {"submittal": submittal_data},
         )
 
+    # Known custom field labels from PowerShell migration scripts.
+    # Procore's submittal detail response doesn't include field labels,
+    # and the admin definition endpoint requires elevated permissions.
+    KNOWN_FIELD_LABELS = {
+        "custom_field_598134325870420": "Paragraph",
+        "custom_field_598134325871359": "QC Code",
+        "custom_field_598134325871360": "QA Code",
+        "custom_field_598134325871364": "Info",
+    }
+
     async def get_custom_fields_for_submittals(self, project_id: int) -> list[dict]:
         """
         Discover custom fields on submittals by reading a submittal detail.
 
         The company-level custom field definition endpoints require elevated
         permissions not available with user OAuth tokens. Instead, we fetch
-        a single submittal's detail which includes its custom_fields with
-        field IDs and labels.
+        a single submittal's detail to get the list of custom field keys,
+        then apply known labels where available.
         """
         try:
             # Fetch one submittal to inspect its custom fields
@@ -256,30 +266,33 @@ class ProcoreAPI:
             )
 
             custom_fields_data = detail.get("custom_fields", {})
-            logger.warning(f"Discovered custom fields from submittal {sub_id}: {list(custom_fields_data.keys())}")
+            if not custom_fields_data:
+                logger.warning(f"Submittal {sub_id} has no custom_fields in response")
+                return []
+
+            logger.warning(f"Discovered {len(custom_fields_data)} custom fields from submittal {sub_id}")
 
             custom_fields = []
-            for field_key, field_data in custom_fields_data.items():
-                # field_key is like "custom_field_598134325870420"
+            for field_key in custom_fields_data.keys():
+                cf_id = field_key.replace("custom_field_", "")
+                field_data = custom_fields_data[field_key]
+
+                # Try to extract label from field data, fall back to known labels
+                label = None
                 if isinstance(field_data, dict):
-                    # Log first field structure to understand the response format
-                    if not custom_fields:
-                        logger.warning(f"Sample custom field '{field_key}' structure: {field_data}")
-                    cf_id = field_data.get("id") or field_key.replace("custom_field_", "")
-                    # Procore nests the label under value.label for dropdown fields,
-                    # or uses a top-level "label" key
-                    label = (
-                        field_data.get("label")
-                        or field_data.get("name")
-                        or (field_data.get("value", {}) or {}).get("label")
-                        or field_key
-                    )
-                    custom_fields.append({
-                        "id": cf_id,
-                        "label": label,
-                        "data_type": field_data.get("data_type", field_data.get("type", "string")),
-                        "field_key": field_key,
-                    })
+                    label = field_data.get("label") or field_data.get("name")
+                if not label:
+                    label = self.KNOWN_FIELD_LABELS.get(field_key, field_key)
+
+                # Log for debugging
+                logger.warning(f"  {field_key}: label='{label}', data_type={type(field_data).__name__}")
+
+                custom_fields.append({
+                    "id": cf_id,
+                    "label": label,
+                    "data_type": "string",
+                    "field_key": field_key,
+                })
 
             return custom_fields
         except Exception as e:
