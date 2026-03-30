@@ -405,11 +405,26 @@ class ProjectConfigStore:
         """Get project configuration. Returns None if not configured."""
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM project_config WHERE project_id = ?", (project_id,))
+            cursor.execute(
+                "SELECT project_id, company_id, config_data, created_at, updated_at FROM project_config WHERE project_id = ?",
+                (project_id,)
+            )
             row = cursor.fetchone()
             if not row:
                 return None
-            data = _row_to_dict(row)
+            # Handle both sqlite3.Row (dict-like) and libsql (tuple)
+            if hasattr(row, "keys"):
+                data = dict(row)
+            elif isinstance(row, dict):
+                data = row
+            else:
+                data = {
+                    "project_id": row[0],
+                    "company_id": row[1],
+                    "config_data": row[2],
+                    "created_at": row[3],
+                    "updated_at": row[4],
+                }
             data["config_data"] = json.loads(data["config_data"])
             return data
 
