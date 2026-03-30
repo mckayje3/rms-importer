@@ -175,13 +175,27 @@ class SyncService:
                 info=sub.info,
             ))
 
-        # Existing submittals - check for changes
+        # Existing submittals - check for changes or missing Procore IDs
         for key in new_keys & baseline_keys:
             old = baseline.submittals[key]
             new = new_submittals[key]
 
+            if not old.procore_id:
+                # In baseline but never created in Procore — treat as create
+                plan.creates.append(CreateAction(
+                    key=key,
+                    section=new.section,
+                    item_no=new.item_no,
+                    revision=new.revision,
+                    title=new.title,
+                    type=new.type,
+                    paragraph=new.paragraph,
+                    info=new.info,
+                ))
+                continue
+
             changes = self._diff_fields(old, new)
-            if changes and old.procore_id:
+            if changes:
                 plan.updates.append(UpdateAction(
                     key=key,
                     procore_id=old.procore_id,
