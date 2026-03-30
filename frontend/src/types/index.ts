@@ -203,6 +203,37 @@ export interface SyncExecuteResponse {
   baseline_updated: boolean;
 }
 
+// File Upload Job Types
+export interface FileFilterResponse {
+  new_files: string[];
+  already_uploaded: string[];
+  unmapped_files: string[];
+  total_checked: number;
+}
+
+export interface FileJobStatus {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  total_files: number;
+  uploaded_files: number;
+  errors: string[];
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  result_summary: {
+    uploaded: number;
+    total: number;
+    errors: number;
+  } | null;
+}
+
+export interface FileUploadResult {
+  job_id: string;
+  status: string;
+  total_files: number;
+  unmapped_files?: number;
+}
+
 // App State
 export type AppStep =
   | "auth"

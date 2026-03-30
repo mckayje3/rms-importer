@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { FolderFileUpload } from "./FolderFileUpload";
+import { FileJobProgress } from "./FileJobProgress";
 
 interface FieldChange {
   field: string;
@@ -59,6 +61,9 @@ interface SyncViewProps {
   onBootstrap?: () => Promise<void>;
   onCancel: () => void;
   isExecuting: boolean;
+  projectId?: number;
+  rmsSessionId?: string;
+  companyId?: number;
 }
 
 // Field display names
@@ -82,12 +87,16 @@ export function SyncView({
   onBootstrap,
   onCancel,
   isExecuting,
+  projectId,
+  rmsSessionId,
+  companyId,
 }: SyncViewProps) {
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
   const [applyCreates, setApplyCreates] = useState(true);
   const [applyUpdates, setApplyUpdates] = useState(true);
   const [applyFiles, setApplyFiles] = useState(true);
   const [bootstrapping, setBootstrapping] = useState(false);
+  const [fileJobId, setFileJobId] = useState<string | null>(null);
 
   const toggleSection = (section: string) => {
     setExpandedSection(expandedSection === section ? null : section);
@@ -411,57 +420,53 @@ export function SyncView({
           )}
 
           {/* File Uploads */}
-          {plan.file_uploads.length > 0 && (
-            <div className="border rounded-lg overflow-hidden">
-              <button
-                onClick={() => toggleSection("files")}
-                className="w-full flex items-center justify-between p-4 bg-purple-50 hover:bg-purple-100 transition-colors"
-              >
-                <div className="flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    checked={applyFiles}
-                    onChange={(e) => {
-                      e.stopPropagation();
-                      setApplyFiles(e.target.checked);
-                    }}
-                    className="w-4 h-4 text-purple-600"
-                  />
-                  <span className="font-medium text-purple-800">
-                    {plan.file_uploads.length} Files to Upload
+          <div className="border rounded-lg overflow-hidden">
+            <button
+              onClick={() => toggleSection("files")}
+              className="w-full flex items-center justify-between p-4 bg-purple-50 hover:bg-purple-100 transition-colors"
+            >
+              <span className="font-medium text-purple-800">
+                File Uploads
+                {plan.files_already_uploaded > 0 && (
+                  <span className="ml-2 text-sm font-normal text-gray-500">
+                    ({plan.files_already_uploaded} already uploaded)
                   </span>
-                </div>
-                <svg
-                  className={`w-5 h-5 text-purple-600 transition-transform ${
-                    expandedSection === "files" ? "rotate-180" : ""
-                  }`}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-              {expandedSection === "files" && (
-                <div className="p-4 border-t border-purple-200 max-h-64 overflow-y-auto">
-                  <ul className="space-y-1 text-sm">
-                    {plan.file_uploads.map((f) => (
-                      <li key={f.filename} className="text-gray-700 truncate">
-                        {f.filename}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Already Uploaded */}
-          {plan.files_already_uploaded > 0 && (
-            <p className="text-sm text-gray-500">
-              {plan.files_already_uploaded} files already uploaded (skipped)
-            </p>
-          )}
+                )}
+              </span>
+              <svg
+                className={`w-5 h-5 text-purple-600 transition-transform ${
+                  expandedSection === "files" ? "rotate-180" : ""
+                }`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {expandedSection === "files" && (
+              <div className="p-4 border-t border-purple-200 space-y-3">
+                {fileJobId ? (
+                  <FileJobProgress
+                    projectId={projectId!}
+                    jobId={fileJobId}
+                    onComplete={() => {}}
+                  />
+                ) : projectId && rmsSessionId && companyId ? (
+                  <FolderFileUpload
+                    projectId={projectId}
+                    rmsSessionId={rmsSessionId}
+                    companyId={companyId}
+                    onUploadStarted={(jobId) => setFileJobId(jobId)}
+                  />
+                ) : (
+                  <p className="text-sm text-gray-500">
+                    File upload not available in this context.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* Flagged Items */}
           {plan.flags.length > 0 && (

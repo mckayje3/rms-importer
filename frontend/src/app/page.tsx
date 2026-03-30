@@ -420,6 +420,9 @@ export default function Home() {
               }}
               onCancel={() => setStep("upload-rms")}
               isExecuting={importing}
+              projectId={project?.id}
+              rmsSessionId={rmsSession?.session_id}
+              companyId={company?.id}
             />
           </div>
         );

@@ -121,6 +121,26 @@ def init_db():
             )
         """)
 
+        # File upload jobs — background processing of file uploads to Procore
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS file_jobs (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                company_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                total_files INTEGER DEFAULT 0,
+                uploaded_files INTEGER DEFAULT 0,
+                errors TEXT,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                email TEXT,
+                file_manifest TEXT NOT NULL,
+                result_summary TEXT
+            )
+        """)
+
 
 def _row_to_dict(row) -> dict:
     """Convert a database row to a dict, handling both sqlite3.Row and libsql tuples."""
@@ -451,7 +471,142 @@ class ProjectConfigStore:
             return cursor.rowcount > 0
 
 
+class FileJobStore:
+    """Store for background file upload jobs."""
+
+    def __init__(self):
+        init_db()
+
+    def create_job(
+        self,
+        job_id: str,
+        project_id: str,
+        company_id: str,
+        session_id: str,
+        manifest: list[dict],
+        total_files: int,
+        email: Optional[str] = None,
+    ) -> None:
+        """Create a new file upload job."""
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO file_jobs
+                (id, project_id, company_id, session_id, status, total_files,
+                 uploaded_files, errors, created_at, email, file_manifest)
+                VALUES (?, ?, ?, ?, 'queued', ?, 0, '[]', ?, ?, ?)
+            """, (
+                job_id, project_id, company_id, session_id,
+                total_files,
+                datetime.utcnow().isoformat(),
+                email,
+                json.dumps(manifest),
+            ))
+
+    def update_progress(
+        self,
+        job_id: str,
+        *,
+        status: Optional[str] = None,
+        uploaded_files: Optional[int] = None,
+        errors: Optional[list[str]] = None,
+        result_summary: Optional[dict] = None,
+    ) -> None:
+        """Update job progress. Only provided fields are updated."""
+        updates = []
+        params = []
+
+        if status is not None:
+            updates.append("status = ?")
+            params.append(status)
+            if status == "running":
+                updates.append("started_at = ?")
+                params.append(datetime.utcnow().isoformat())
+            elif status in ("completed", "failed"):
+                updates.append("completed_at = ?")
+                params.append(datetime.utcnow().isoformat())
+
+        if uploaded_files is not None:
+            updates.append("uploaded_files = ?")
+            params.append(uploaded_files)
+
+        if errors is not None:
+            updates.append("errors = ?")
+            params.append(json.dumps(errors))
+
+        if result_summary is not None:
+            updates.append("result_summary = ?")
+            params.append(json.dumps(result_summary))
+
+        if not updates:
+            return
+
+        params.append(job_id)
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"UPDATE file_jobs SET {', '.join(updates)} WHERE id = ?",
+                params,
+            )
+
+    def get_job(self, job_id: str) -> Optional[dict]:
+        """Get a file job by ID."""
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, project_id, company_id, session_id, status, total_files, "
+                "uploaded_files, errors, created_at, started_at, completed_at, "
+                "email, file_manifest, result_summary FROM file_jobs WHERE id = ?",
+                (job_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            cols = [
+                "id", "project_id", "company_id", "session_id", "status",
+                "total_files", "uploaded_files", "errors", "created_at",
+                "started_at", "completed_at", "email", "file_manifest",
+                "result_summary",
+            ]
+            if hasattr(row, "keys"):
+                data = dict(row)
+            else:
+                data = dict(zip(cols, row))
+
+            data["errors"] = json.loads(data["errors"]) if data["errors"] else []
+            data["file_manifest"] = json.loads(data["file_manifest"]) if data["file_manifest"] else []
+            data["result_summary"] = json.loads(data["result_summary"]) if data["result_summary"] else None
+            return data
+
+    def get_jobs_for_project(self, project_id: str, limit: int = 10) -> list[dict]:
+        """Get recent jobs for a project."""
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, status, total_files, uploaded_files, errors, "
+                "created_at, started_at, completed_at, result_summary "
+                "FROM file_jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT ?",
+                (project_id, limit),
+            )
+            cols = [
+                "id", "status", "total_files", "uploaded_files", "errors",
+                "created_at", "started_at", "completed_at", "result_summary",
+            ]
+            results = []
+            for row in cursor.fetchall():
+                if hasattr(row, "keys"):
+                    d = dict(row)
+                else:
+                    d = dict(zip(cols, row))
+                d["errors"] = json.loads(d["errors"]) if d["errors"] else []
+                d["result_summary"] = json.loads(d["result_summary"]) if d["result_summary"] else None
+                results.append(d)
+            return results
+
+
 # Global instances
 session_store = SessionStore()
 baseline_store = BaselineStore()
 project_config_store = ProjectConfigStore()
+file_job_store = FileJobStore()

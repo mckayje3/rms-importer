@@ -2,13 +2,16 @@
 import os
 import asyncio
 import logging
+import tempfile
+import uuid
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import Optional
 
 from services.sync_service import SyncService
 from services.procore_api import ProcoreAPI, RateLimitError
+from services.file_job import process_file_job
 from models.sync import (
     SyncPlan,
     SyncAnalysisResponse,
@@ -19,7 +22,7 @@ from models.sync import (
 )
 from routers.rms_upload import get_rms_data
 from routers.auth import get_token
-from database import baseline_store
+from database import baseline_store, file_job_store
 from database import project_config_store
 from config import get_settings
 from models.mappings import get_status_id
@@ -548,4 +551,206 @@ async def resolve_flagged_item(
         "status": "resolved" if success else "not_found",
         "item_id": item_id,
         "resolution": request.resolution,
+    }
+
+
+# === File Upload Endpoints ===
+
+
+class FileFilterRequest(BaseModel):
+    """Request to filter filenames against baseline."""
+    session_id: str
+    filenames: list[str]
+
+
+@router.post("/projects/{project_id}/filter-files")
+async def filter_files(
+    project_id: int,
+    request: FileFilterRequest,
+) -> dict:
+    """
+    Check which files are new vs already uploaded.
+
+    Compares filenames against the baseline's uploaded files list.
+    Also checks which files can be mapped to submittals.
+    No Procore API calls — fast, local-only operation.
+    """
+    # Get baseline
+    baseline = baseline_store.get_baseline(str(project_id))
+    baseline_files = set()
+    if baseline and baseline.get("data", {}).get("files"):
+        baseline_files = set(baseline["data"]["files"].keys())
+
+    # Get RMS data for file mapping
+    try:
+        rms_data = get_rms_data(request.session_id)
+    except HTTPException:
+        raise HTTPException(
+            status_code=404,
+            detail="RMS session not found. Upload RMS files first.",
+        )
+
+    # Filter: new vs already uploaded
+    new_files = [f for f in request.filenames if f not in baseline_files]
+    already_uploaded = [f for f in request.filenames if f in baseline_files]
+
+    # Check which new files can be mapped to submittals
+    _project_config = project_config_store.get_config(str(project_id))
+    _config_data = _project_config["config_data"] if _project_config else None
+    sync_service = SyncService(str(project_id), "", config=_config_data)
+
+    file_to_keys = sync_service.map_files_to_submittals(new_files, rms_data)
+    mapped_files = [f for f in new_files if f in file_to_keys]
+    unmapped_files = [f for f in new_files if f not in file_to_keys]
+
+    return {
+        "new_files": mapped_files,
+        "already_uploaded": already_uploaded,
+        "unmapped_files": unmapped_files,
+        "total_checked": len(request.filenames),
+    }
+
+
+@router.post("/projects/{project_id}/upload-files")
+async def upload_files(
+    project_id: int,
+    files: list[UploadFile] = File(...),
+    x_auth_session: str = Header(..., alias="X-Auth-Session"),
+    x_company_id: int = Header(..., alias="X-Company-Id"),
+    x_rms_session: str = Header(..., alias="X-RMS-Session"),
+    email: Optional[str] = Form(None),
+) -> dict:
+    """
+    Upload files and start a background job to attach them to Procore submittals.
+
+    1. Saves uploaded files to a temp directory
+    2. Maps each file to its target submittal(s)
+    3. Creates a background job
+    4. Returns job ID for status polling
+    """
+    # Validate auth
+    try:
+        get_token(x_auth_session)
+    except HTTPException:
+        raise HTTPException(status_code=401, detail="Invalid auth session")
+
+    # Get RMS data for file mapping
+    try:
+        rms_data = get_rms_data(x_rms_session)
+    except HTTPException:
+        raise HTTPException(
+            status_code=404,
+            detail="RMS session not found. Upload RMS files first.",
+        )
+
+    # Save files to temp directory
+    temp_dir = tempfile.mkdtemp(prefix="rms_upload_")
+    saved_files = []
+
+    try:
+        for upload_file in files:
+            file_path = os.path.join(temp_dir, upload_file.filename)
+            content = await upload_file.read()
+            with open(file_path, "wb") as f:
+                f.write(content)
+            saved_files.append({
+                "filename": upload_file.filename,
+                "temp_path": file_path,
+            })
+    except Exception as e:
+        # Clean up on error
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"Failed to save files: {e}")
+
+    # Map files to submittals
+    _project_config = project_config_store.get_config(str(project_id))
+    _config_data = _project_config["config_data"] if _project_config else None
+    sync_service = SyncService(str(project_id), str(x_company_id), config=_config_data)
+
+    filenames = [f["filename"] for f in saved_files]
+    file_to_keys = sync_service.map_files_to_submittals(filenames, rms_data)
+
+    # Build manifest: only files that mapped to submittals
+    manifest = []
+    for item in saved_files:
+        keys = file_to_keys.get(item["filename"], [])
+        if keys:
+            manifest.append({
+                "filename": item["filename"],
+                "temp_path": item["temp_path"],
+                "submittal_keys": keys,
+            })
+
+    if not manifest:
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return {
+            "status": "no_files",
+            "message": "No files could be mapped to submittals",
+            "total_files": 0,
+        }
+
+    # Create job
+    job_id = str(uuid.uuid4())
+    file_job_store.create_job(
+        job_id=job_id,
+        project_id=str(project_id),
+        company_id=str(x_company_id),
+        session_id=x_auth_session,
+        manifest=manifest,
+        total_files=len(manifest),
+        email=email,
+    )
+
+    # Start background task
+    asyncio.create_task(process_file_job(job_id))
+
+    logger.info(
+        f"File upload job {job_id} created: {len(manifest)} files for project {project_id}"
+    )
+
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "total_files": len(manifest),
+        "unmapped_files": len(saved_files) - len(manifest),
+    }
+
+
+@router.get("/projects/{project_id}/file-jobs/{job_id}")
+async def get_file_job_status(
+    project_id: int,
+    job_id: str,
+) -> dict:
+    """Get the status of a file upload job."""
+    job = file_job_store.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["project_id"] != str(project_id):
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    return {
+        "id": job["id"],
+        "status": job["status"],
+        "total_files": job["total_files"],
+        "uploaded_files": job["uploaded_files"],
+        "errors": job["errors"],
+        "created_at": job["created_at"],
+        "started_at": job["started_at"],
+        "completed_at": job["completed_at"],
+        "result_summary": job["result_summary"],
+    }
+
+
+@router.get("/projects/{project_id}/file-jobs")
+async def list_file_jobs(
+    project_id: int,
+    limit: int = 10,
+) -> dict:
+    """List recent file upload jobs for a project."""
+    jobs = file_job_store.get_jobs_for_project(str(project_id), limit)
+    return {
+        "project_id": project_id,
+        "jobs": jobs,
     }

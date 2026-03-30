@@ -16,6 +16,9 @@ import type {
   ProjectDiscovery,
   ProjectConfig,
   ProjectConfigData,
+  FileFilterResponse,
+  FileJobStatus,
+  FileUploadResult,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -313,6 +316,81 @@ export const sync = {
         company_id: companyId,
       }),
     });
+  },
+
+  filterFiles: async (
+    projectId: number,
+    sessionId: string,
+    filenames: string[]
+  ): Promise<FileFilterResponse> => {
+    return fetchAPI(`/sync/projects/${projectId}/filter-files`, {
+      method: "POST",
+      body: JSON.stringify({
+        session_id: sessionId,
+        filenames,
+      }),
+    });
+  },
+
+  uploadFiles: async (
+    projectId: number,
+    files: File[],
+    rmsSessionId: string,
+    companyId: number,
+    email?: string,
+    onProgress?: (batch: number, totalBatches: number) => void
+  ): Promise<FileUploadResult> => {
+    const authSession = typeof window !== "undefined"
+      ? sessionStorage.getItem("auth_session")
+      : null;
+
+    const BATCH_SIZE = 5;
+    let lastResult: FileUploadResult | null = null;
+
+    // Upload in batches to stay within request size limits
+    const totalBatches = Math.ceil(files.length / BATCH_SIZE);
+
+    for (let i = 0; i < files.length; i += BATCH_SIZE) {
+      const batch = files.slice(i, i + BATCH_SIZE);
+      const formData = new FormData();
+      for (const file of batch) {
+        formData.append("files", file);
+      }
+      if (email) {
+        formData.append("email", email);
+      }
+
+      const response = await fetch(
+        `${API_BASE}/sync/projects/${projectId}/upload-files`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            ...(authSession ? { "X-Auth-Session": authSession } : {}),
+            "X-Company-Id": String(companyId),
+            "X-RMS-Session": rmsSessionId,
+          },
+          body: formData,
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new APIError(response.status, error.detail || "Upload failed");
+      }
+
+      lastResult = await response.json();
+      onProgress?.(Math.floor(i / BATCH_SIZE) + 1, totalBatches);
+    }
+
+    return lastResult!;
+  },
+
+  getFileJobStatus: async (
+    projectId: number,
+    jobId: string
+  ): Promise<FileJobStatus> => {
+    return fetchAPI(`/sync/projects/${projectId}/file-jobs/${jobId}`);
   },
 };
 

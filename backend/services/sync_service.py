@@ -133,7 +133,7 @@ class SyncService:
                         ))
 
         # All files need to be uploaded
-        file_to_keys = self._map_files_to_submittals(new_files, rms_data)
+        file_to_keys = self.map_files_to_submittals(new_files, rms_data)
         for filename, keys in file_to_keys.items():
             plan.file_uploads.append(FileUploadAction(
                 filename=filename,
@@ -217,7 +217,7 @@ class SyncService:
         new_file_set = set(new_files)
 
         # New files to upload
-        file_to_keys = self._map_files_to_submittals(
+        file_to_keys = self.map_files_to_submittals(
             list(new_file_set - baseline_files),
             rms_data
         )
@@ -374,7 +374,7 @@ class SyncService:
 
         return result
 
-    def _map_files_to_submittals(
+    def map_files_to_submittals(
         self,
         filenames: list[str],
         rms_data: RMSParseResult,
