@@ -261,13 +261,23 @@ class ProcoreAPI:
             custom_fields = []
             for field_key, field_data in custom_fields_data.items():
                 # field_key is like "custom_field_598134325870420"
-                # field_data has "value", "label", "data_type", etc.
                 if isinstance(field_data, dict):
+                    # Log first field structure to understand the response format
+                    if not custom_fields:
+                        logger.warning(f"Sample custom field '{field_key}' structure: {field_data}")
                     cf_id = field_data.get("id") or field_key.replace("custom_field_", "")
+                    # Procore nests the label under value.label for dropdown fields,
+                    # or uses a top-level "label" key
+                    label = (
+                        field_data.get("label")
+                        or field_data.get("name")
+                        or (field_data.get("value", {}) or {}).get("label")
+                        or field_key
+                    )
                     custom_fields.append({
                         "id": cf_id,
-                        "label": field_data.get("label", field_key),
-                        "data_type": field_data.get("data_type", "string"),
+                        "label": label,
+                        "data_type": field_data.get("data_type", field_data.get("type", "string")),
                         "field_key": field_key,
                     })
 
