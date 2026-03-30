@@ -23,6 +23,19 @@ export function ProjectSetup({ projectId, companyId, onSetupComplete, onAutoSkip
   const [statusMode, setStatusMode] = useState<"qa_code" | "rms_status">("qa_code");
   const [statusMap, setStatusMap] = useState<Record<string, string>>({});
   const [sdTypeMap, setSdTypeMap] = useState<Record<string, string>>({});
+
+  // Normalize status map values: backend may send {name, id} dicts or plain strings
+  const normalizeStatusMap = (map: Record<string, unknown>): Record<string, string> => {
+    const result: Record<string, string> = {};
+    for (const [key, val] of Object.entries(map)) {
+      if (typeof val === "string") {
+        result[key] = val;
+      } else if (val && typeof val === "object" && "name" in val) {
+        result[key] = (val as { name: string }).name;
+      }
+    }
+    return result;
+  };
   const [paragraphField, setParagraphField] = useState<string>("");
   const [infoField, setInfoField] = useState<string>("");
 
@@ -43,7 +56,7 @@ export function ProjectSetup({ projectId, companyId, onSetupComplete, onAutoSkip
 
           // Config exists but not completed — load it for editing
           setStatusMode(config.status_mode || "qa_code");
-          setStatusMap(config.status_map || {});
+          setStatusMap(normalizeStatusMap(config.status_map || {}));
           setSdTypeMap(config.sd_type_map || {});
           setParagraphField(config.custom_fields?.paragraph || "");
           setInfoField(config.custom_fields?.info || "");
@@ -57,7 +70,7 @@ export function ProjectSetup({ projectId, companyId, onSetupComplete, onAutoSkip
           setDiscovery(disc);
           const suggested = disc.suggested_config;
           setStatusMode(suggested.status_mode || "qa_code");
-          setStatusMap(suggested.status_map);
+          setStatusMap(normalizeStatusMap(suggested.status_map));
           setSdTypeMap(suggested.sd_type_map);
           setParagraphField(suggested.custom_fields?.paragraph || "");
           setInfoField(suggested.custom_fields?.info || "");
