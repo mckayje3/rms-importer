@@ -65,6 +65,83 @@ async def delete_baseline(
     }
 
 
+class BootstrapRequest(BaseModel):
+    """Request to bootstrap a baseline from existing Procore data."""
+    session_id: str
+    company_id: int
+
+
+@router.post("/projects/{project_id}/bootstrap")
+async def bootstrap_baseline(
+    project_id: int,
+    request: BootstrapRequest,
+    x_auth_session: str = Header(..., alias="X-Auth-Session"),
+):
+    """
+    Bootstrap a baseline by matching RMS data against existing Procore submittals.
+
+    Use this when the project was migrated via PowerShell scripts and doesn't
+    have a web-app baseline yet. Matches by spec section + item number + revision.
+    No submittals are created or modified — only the baseline is saved.
+    """
+    try:
+        access_token = get_token(x_auth_session)
+    except HTTPException:
+        raise HTTPException(status_code=401, detail="Invalid auth session")
+
+    try:
+        rms_data = get_rms_data(request.session_id)
+    except HTTPException:
+        raise HTTPException(status_code=404, detail="RMS session not found. Upload RMS files first.")
+
+    # Load project config
+    _project_config = project_config_store.get_config(str(project_id))
+    _config_data = _project_config["config_data"] if _project_config else None
+
+    # Fetch all existing Procore submittals
+    api = ProcoreAPI(access_token, company_id=request.company_id)
+    procore_submittals = await api.get_submittals(project_id)
+
+    # Build lookup: (section, item_no, revision) -> procore_id
+    procore_lookup: dict[str, int] = {}
+    for sub in procore_submittals:
+        if sub.specification_section:
+            key = f"{sub.specification_section.number}|{sub.number}|{sub.revision}"
+            procore_lookup[key] = sub.id
+
+    logger.warning(f"Bootstrap: {len(procore_submittals)} Procore submittals, {len(procore_lookup)} unique keys")
+
+    # Build RMS data into stored format and match against Procore
+    service = SyncService(str(project_id), str(request.company_id), config=_config_data)
+    date_lookup = service._build_date_lookup(rms_data.transmittal_entries)
+    info_lookup = service._build_info_lookup(rms_data)
+    rms_submittals = service._rms_to_stored_format(rms_data, date_lookup, info_lookup)
+
+    # Match RMS keys to Procore IDs
+    matched = 0
+    unmatched = 0
+    procore_ids: dict[str, int] = {}
+    for key in rms_submittals:
+        if key in procore_lookup:
+            procore_ids[key] = procore_lookup[key]
+            matched += 1
+        else:
+            unmatched += 1
+
+    logger.warning(f"Bootstrap: matched={matched}, unmatched={unmatched}")
+
+    # Save baseline
+    service.save_baseline(rms_data, procore_ids, {})
+
+    return {
+        "status": "bootstrapped",
+        "matched": matched,
+        "unmatched": unmatched,
+        "total_rms": len(rms_submittals),
+        "total_procore": len(procore_submittals),
+    }
+
+
 @router.post("/projects/{project_id}/analyze")
 async def analyze_sync(
     project_id: int,
