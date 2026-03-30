@@ -238,6 +238,10 @@ class ProcoreAPI:
         "custom_field_598134325871359": "QC Code",
         "custom_field_598134325871360": "QA Code",
         "custom_field_598134325871364": "Info",
+        "custom_field_598134325872866": "Contractor Prepared",
+        "custom_field_598134325872868": "Government Received",
+        "custom_field_598134325872869": "Government Returned",
+        "custom_field_598134325872871": "Contractor Received",
     }
 
     async def get_custom_fields_for_submittals(self, project_id: int) -> list[dict]:
