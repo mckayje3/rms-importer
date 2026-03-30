@@ -353,7 +353,7 @@ export default function Home() {
               Upload RMS Files
             </h2>
             <p className="text-gray-600 mb-6">
-              Upload the three RMS export files to begin the import process.
+              Upload your RMS export files to begin the import process.
             </p>
             <RMSUpload onUploadComplete={handleRmsUpload} />
           </div>
