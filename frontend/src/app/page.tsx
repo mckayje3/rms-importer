@@ -8,8 +8,9 @@ import {
   RMSUpload,
   AnalysisView,
   SyncView,
+  ProjectSetup,
 } from "@/components";
-import { auth, projects as projectsApi, submittals, sync, health } from "@/lib/api";
+import { auth, projects as projectsApi, submittals, sync, setup, health } from "@/lib/api";
 import { useEmbeddedContext } from "@/lib/useEmbeddedContext";
 import type {
   AppStep,
@@ -21,6 +22,7 @@ import type {
   ImportMode,
   SyncAnalysisResponse,
   SyncExecuteResponse,
+  ProjectConfigData,
 } from "@/types";
 
 export default function Home() {
@@ -43,6 +45,7 @@ export default function Home() {
   const [syncResult, setSyncResult] = useState<SyncExecuteResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [autoSelectingProject, setAutoSelectingProject] = useState(false);
+  const [projectConfig, setProjectConfig] = useState<ProjectConfigData | null>(null);
 
   // Check authentication on mount
   useEffect(() => {
@@ -122,7 +125,7 @@ export default function Home() {
         setCompany(matchedCompany);
         setProject(matchedProject);
         setProcoreStats(stats);
-        setStep("upload-rms");
+        setStep("project-setup");
       } catch (err) {
         setError("Failed to auto-select project from Procore context");
         console.error(err);
@@ -207,6 +210,11 @@ export default function Home() {
     setCompany(selectedCompany);
     setProject(selectedProject);
     setProcoreStats(stats);
+    setStep("project-setup");
+  };
+
+  const handleSetupComplete = (config: ProjectConfigData) => {
+    setProjectConfig(config);
     setStep("upload-rms");
   };
 
@@ -216,25 +224,15 @@ export default function Home() {
     if (!project || !company) return;
 
     try {
-      // Check if a baseline exists for this project
-      const baseline = await sync.getBaseline(project.id);
-
-      if (baseline.has_baseline) {
-        // Incremental sync: analyze against baseline
-        setStep("analyze");
-        const syncResult = await sync.analyze(
-          project.id,
-          session.session_id,
-          company.id
-        );
-        setSyncAnalysis(syncResult);
-        setStep("sync-review");
-      } else {
-        // No baseline: use original full migration flow
-        setStep("analyze");
-        const result = await submittals.analyze(project.id, session.session_id);
-        setAnalysis(result);
-      }
+      // Always use sync analyze - it handles both full migration and incremental
+      setStep("analyze");
+      const syncResult = await sync.analyze(
+        project.id,
+        session.session_id,
+        company.id
+      );
+      setSyncAnalysis(syncResult);
+      setStep("sync-review");
     } catch (err) {
       setError("Failed to analyze data");
       console.error(err);
@@ -326,6 +324,25 @@ export default function Home() {
               Choose the Procore project where you want to import RMS data.
             </p>
             <ProjectSelector onProjectSelect={handleProjectSelect} />
+          </div>
+        );
+
+      case "project-setup":
+        if (!project || !company) return null;
+        return (
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">
+              Project Setup
+            </h2>
+            <p className="text-gray-600 mb-6">
+              Configure how RMS data maps to this Procore project.
+            </p>
+            <ProjectSetup
+              projectId={project.id}
+              companyId={company.id}
+              onSetupComplete={handleSetupComplete}
+              onAutoSkip={handleSetupComplete}
+            />
           </div>
         );
 
@@ -576,6 +593,7 @@ export default function Home() {
                 setImportResult(null);
                 setSyncAnalysis(null);
                 setSyncResult(null);
+                setProjectConfig(null);
               }}
               className="bg-orange-500 text-white px-8 py-3 rounded-lg font-medium hover:bg-orange-600 transition-colors"
             >

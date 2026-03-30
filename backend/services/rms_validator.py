@@ -165,20 +165,21 @@ class RMSValidator:
     def validate_all(
         self,
         register_bytes: bytes,
-        assignments_bytes: bytes,
-        transmittal_bytes: bytes,
+        assignments_bytes: Optional[bytes] = None,
+        transmittal_bytes: Optional[bytes] = None,
         transmittal_report_bytes: Optional[bytes] = None,
     ) -> ValidationResult:
         """
         Validate all RMS files.
 
+        Only register_bytes is required. Other files are optional.
         Returns ValidationResult with is_valid=True if no errors.
         """
         issues = []
         row_counts = {}
         column_info = {}
 
-        # Validate each file
+        # Validate register (required)
         reg_issues, reg_df = self._validate_file(
             register_bytes, FileType.SUBMITTAL_REGISTER, self.REGISTER_SCHEMA
         )
@@ -189,27 +190,33 @@ class RMSValidator:
             # Additional register-specific validation
             issues.extend(self._validate_register_data(reg_df))
 
-        assign_issues, assign_df = self._validate_file(
-            assignments_bytes, FileType.SUBMITTAL_ASSIGNMENTS, self.ASSIGNMENTS_SCHEMA
-        )
-        issues.extend(assign_issues)
-        if assign_df is not None:
-            row_counts["submittal_assignments"] = len(assign_df)
-            column_info["submittal_assignments"] = list(assign_df.columns)
-            # Additional assignments-specific validation
-            issues.extend(self._validate_assignments_data(assign_df))
+        # Validate assignments (optional)
+        assign_df = None
+        if assignments_bytes:
+            assign_issues, assign_df = self._validate_file(
+                assignments_bytes, FileType.SUBMITTAL_ASSIGNMENTS, self.ASSIGNMENTS_SCHEMA
+            )
+            issues.extend(assign_issues)
+            if assign_df is not None:
+                row_counts["submittal_assignments"] = len(assign_df)
+                column_info["submittal_assignments"] = list(assign_df.columns)
+                # Additional assignments-specific validation
+                issues.extend(self._validate_assignments_data(assign_df))
 
-        trans_issues, trans_df = self._validate_file(
-            transmittal_bytes, FileType.TRANSMITTAL_LOG, self.TRANSMITTAL_SCHEMA
-        )
-        issues.extend(trans_issues)
-        if trans_df is not None:
-            row_counts["transmittal_log"] = len(trans_df)
-            column_info["transmittal_log"] = list(trans_df.columns)
-            # Additional transmittal-specific validation
-            issues.extend(self._validate_transmittal_data(trans_df))
+        # Validate transmittal log (optional)
+        trans_df = None
+        if transmittal_bytes:
+            trans_issues, trans_df = self._validate_file(
+                transmittal_bytes, FileType.TRANSMITTAL_LOG, self.TRANSMITTAL_SCHEMA
+            )
+            issues.extend(trans_issues)
+            if trans_df is not None:
+                row_counts["transmittal_log"] = len(trans_df)
+                column_info["transmittal_log"] = list(trans_df.columns)
+                # Additional transmittal-specific validation
+                issues.extend(self._validate_transmittal_data(trans_df))
 
-        # Validate Transmittal Report (optional file)
+        # Validate Transmittal Report (optional)
         if transmittal_report_bytes:
             report_issues, report_count = self._validate_transmittal_report(
                 transmittal_report_bytes
@@ -218,8 +225,8 @@ class RMSValidator:
             if report_count is not None:
                 row_counts["transmittal_report"] = report_count
 
-        # Cross-file validation
-        if reg_df is not None and assign_df is not None:
+        # Cross-file validation (only if we have at least register + one other file)
+        if reg_df is not None:
             issues.extend(self._validate_cross_references(reg_df, assign_df, trans_df))
 
         # Determine overall validity (no errors = valid)
@@ -757,7 +764,7 @@ class RMSValidator:
     def _validate_cross_references(
         self,
         register_df: pd.DataFrame,
-        assignments_df: pd.DataFrame,
+        assignments_df: Optional[pd.DataFrame],
         transmittal_df: Optional[pd.DataFrame],
     ) -> list[ValidationIssue]:
         """Validate cross-references between files."""
@@ -772,8 +779,8 @@ class RMSValidator:
                 if section and item:
                     register_keys.add(f"{section}-{item}")
 
-            # Check assignments reference valid submittals
-            if "section" in assignments_df.columns and "item no" in assignments_df.columns:
+            # Check assignments reference valid submittals (only if assignments provided)
+            if assignments_df is not None and "section" in assignments_df.columns and "item no" in assignments_df.columns:
                 orphan_count = 0
                 for _, row in assignments_df.iterrows():
                     section = str(row.get("section", "")).strip()

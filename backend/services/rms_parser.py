@@ -55,25 +55,31 @@ class RMSParser:
     def parse_all(
         self,
         register_bytes: bytes,
-        assignments_bytes: bytes,
-        transmittal_bytes: bytes,
+        assignments_bytes: Optional[bytes] = None,
+        transmittal_bytes: Optional[bytes] = None,
         transmittal_report_bytes: Optional[bytes] = None,
     ) -> RMSParseResult:
-        """Parse all RMS export files."""
+        """Parse all RMS export files. Only register is required."""
         errors = []
         warnings = []
 
-        # Parse each file
+        # Parse register (required)
         submittals, reg_errors = self._parse_register(register_bytes)
         errors.extend(reg_errors)
 
-        assignments, assign_errors = self._parse_assignments(assignments_bytes)
-        errors.extend(assign_errors)
+        # Parse assignments (optional)
+        assignments: list[RMSAssignment] = []
+        if assignments_bytes:
+            assignments, assign_errors = self._parse_assignments(assignments_bytes)
+            errors.extend(assign_errors)
 
-        transmittal_entries, trans_errors = self._parse_transmittal_log(transmittal_bytes)
-        errors.extend(trans_errors)
+        # Parse transmittal log (optional)
+        transmittal_entries: list[TransmittalLogEntry] = []
+        if transmittal_bytes:
+            transmittal_entries, trans_errors = self._parse_transmittal_log(transmittal_bytes)
+            errors.extend(trans_errors)
 
-        # Parse transmittal report (QA codes)
+        # Parse transmittal report (optional)
         transmittal_report: list[TransmittalReportEntry] = []
         if transmittal_report_bytes:
             transmittal_report, report_errors = self._parse_transmittal_report(transmittal_report_bytes)

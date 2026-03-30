@@ -110,6 +110,17 @@ def init_db():
             )
         """)
 
+        # Project configuration table - per-project settings for multi-project support
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS project_config (
+                project_id TEXT PRIMARY KEY,
+                company_id TEXT NOT NULL,
+                config_data TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
 
 def _row_to_dict(row) -> dict:
     """Convert a database row to a dict, handling both sqlite3.Row and libsql tuples."""
@@ -384,6 +395,48 @@ class BaselineStore:
             return cursor.rowcount > 0
 
 
+class ProjectConfigStore:
+    """Store for per-project configuration (status mappings, custom field IDs, etc.)."""
+
+    def __init__(self):
+        init_db()
+
+    def get_config(self, project_id: str) -> Optional[dict]:
+        """Get project configuration. Returns None if not configured."""
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM project_config WHERE project_id = ?", (project_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            data = _row_to_dict(row)
+            data["config_data"] = json.loads(data["config_data"])
+            return data
+
+    def save_config(self, project_id: str, company_id: str, config_data: dict) -> None:
+        """Save or update project configuration."""
+        now = datetime.utcnow().isoformat()
+        config_json = json.dumps(config_data)
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO project_config (project_id, company_id, config_data, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(project_id) DO UPDATE SET
+                    company_id = excluded.company_id,
+                    config_data = excluded.config_data,
+                    updated_at = excluded.updated_at
+            """, (project_id, company_id, config_json, now, now))
+
+    def delete_config(self, project_id: str) -> bool:
+        """Delete project configuration. Returns True if deleted."""
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM project_config WHERE project_id = ?", (project_id,))
+            return cursor.rowcount > 0
+
+
 # Global instances
 session_store = SessionStore()
 baseline_store = BaselineStore()
+project_config_store = ProjectConfigStore()

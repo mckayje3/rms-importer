@@ -230,6 +230,75 @@ class ProcoreAPI:
             {"submittal": submittal_data},
         )
 
+    async def get_configurable_field_sets(self, project_id: int) -> list[dict]:
+        """
+        Get custom fields configured on submittals for a project.
+
+        Returns list of custom field definitions with id, label, and data_type.
+        Procore endpoint: GET /rest/v1.0/projects/{project_id}/submittals/configurable_field_sets
+        """
+        try:
+            result = await self._get(
+                f"/rest/v1.0/projects/{project_id}/submittals/configurable_field_sets"
+            )
+            # The response contains field sets with configurable fields
+            # Extract individual custom fields from the response
+            custom_fields = []
+            if isinstance(result, list):
+                for field_set in result:
+                    for cf in field_set.get("custom_fields", []):
+                        custom_fields.append({
+                            "id": cf.get("custom_field_definition_id"),
+                            "label": cf.get("label", ""),
+                            "data_type": cf.get("data_type", "string"),
+                            "field_key": f"custom_field_{cf.get('custom_field_definition_id', '')}",
+                        })
+            elif isinstance(result, dict):
+                for cf in result.get("custom_fields", []):
+                    custom_fields.append({
+                        "id": cf.get("custom_field_definition_id"),
+                        "label": cf.get("label", ""),
+                        "data_type": cf.get("data_type", "string"),
+                        "field_key": f"custom_field_{cf.get('custom_field_definition_id', '')}",
+                    })
+            return custom_fields
+        except Exception as e:
+            logger.warning(f"Failed to fetch configurable field sets: {e}")
+            return []
+
+    async def get_submittal_statuses(self, project_id: int) -> list[str]:
+        """
+        Get available submittal statuses for a project.
+
+        Extracts from existing submittals and includes Procore defaults.
+        """
+        # Known Procore default submittal statuses
+        default_statuses = ["Draft", "Open", "Closed"]
+
+        try:
+            # Fetch a sample of submittals to discover statuses in use
+            submittals = await self.get_submittals(project_id)
+            found_statuses = set()
+            for sub in submittals:
+                if hasattr(sub, 'status') and sub.status:
+                    found_statuses.add(sub.status)
+                # Also check the raw dict if it's a dict
+                elif isinstance(sub, dict) and sub.get('status'):
+                    status = sub['status']
+                    if isinstance(status, dict):
+                        found_statuses.add(status.get('status', ''))
+                    else:
+                        found_statuses.add(str(status))
+
+            # Merge defaults with discovered statuses
+            all_statuses = set(default_statuses) | found_statuses
+            # Remove empty strings
+            all_statuses.discard("")
+            return sorted(all_statuses)
+        except Exception as e:
+            logger.warning(f"Failed to fetch submittal statuses: {e}")
+            return default_statuses
+
     # === File Upload Methods ===
 
     async def upload_file(

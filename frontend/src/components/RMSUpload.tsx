@@ -17,10 +17,10 @@ export function RMSUpload({ onUploadComplete }: RMSUploadProps) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const allFilesSelected = registerFile && assignmentsFile && transmittalFile && reportFile;
+  const canUpload = registerFile !== null;
 
   const handleUpload = async () => {
-    if (!allFilesSelected) return;
+    if (!canUpload) return;
 
     setUploading(true);
     setError(null);
@@ -28,9 +28,9 @@ export function RMSUpload({ onUploadComplete }: RMSUploadProps) {
     try {
       const session = await rms.upload(
         registerFile,
-        assignmentsFile,
-        transmittalFile,
-        reportFile
+        assignmentsFile || undefined,
+        transmittalFile || undefined,
+        reportFile || undefined
       );
       onUploadComplete(session);
     } catch (err) {
@@ -45,39 +45,40 @@ export function RMSUpload({ onUploadComplete }: RMSUploadProps) {
     <div className="space-y-6">
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
         <h3 className="text-sm font-medium text-blue-800 mb-2">
-          RMS Export Files Required
+          RMS Export Files
         </h3>
         <p className="text-sm text-blue-700">
-          Export these four files from RMS (Resident Management System) and upload them below.
-          All files should be in Excel format (.xlsx).
+          Upload RMS (Resident Management System) export files below.
+          Only the Submittal Register is required. Optional files add
+          additional data like assignments, revision tracking, and QA codes.
         </p>
       </div>
 
       <div className="space-y-4">
         <FileUpload
-          label="Submittal Register"
+          label="Submittal Register (Required)"
           description="Contains all submittals with status, dates, and QA/QC codes"
           file={registerFile}
           onFileSelect={setRegisterFile}
         />
 
         <FileUpload
-          label="Submittal Assignments"
-          description="Contains submittal assignments and schedule activities"
+          label="Submittal Assignments (Optional)"
+          description="Adds Info field (GA/FIO/S) classification"
           file={assignmentsFile}
           onFileSelect={setAssignmentsFile}
         />
 
         <FileUpload
-          label="Transmittal Log"
-          description="In RMS, click Transmittal Log then select Completed Transmittals before downloading"
+          label="Transmittal Log (Optional)"
+          description="Adds revision tracking and date fields"
           file={transmittalFile}
           onFileSelect={setTransmittalFile}
         />
 
         <FileUpload
-          label="Transmittal Report"
-          description="In RMS, go to Contract Reports > Submit > double-click Transmittal Log > Preview > Save as CSV"
+          label="Transmittal Report (Optional)"
+          description="Adds historical QA codes per revision"
           accept=".csv,.xlsx,.xls"
           file={reportFile}
           onFileSelect={setReportFile}
@@ -92,11 +93,11 @@ export function RMSUpload({ onUploadComplete }: RMSUploadProps) {
 
       <button
         onClick={handleUpload}
-        disabled={!allFilesSelected || uploading}
+        disabled={!canUpload || uploading}
         className={`
           w-full py-3 px-4 rounded-lg font-medium transition-colors flex items-center justify-center gap-2
           ${
-            allFilesSelected && !uploading
+            canUpload && !uploading
               ? "bg-orange-500 text-white hover:bg-orange-600"
               : "bg-gray-200 text-gray-500 cursor-not-allowed"
           }

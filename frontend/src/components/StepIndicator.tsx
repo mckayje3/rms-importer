@@ -5,6 +5,7 @@ import type { AppStep } from "@/types";
 const STEPS: { key: AppStep; label: string }[] = [
   { key: "auth", label: "Connect" },
   { key: "select-project", label: "Select Project" },
+  { key: "project-setup", label: "Setup" },
   { key: "upload-rms", label: "Upload RMS" },
   { key: "analyze", label: "Analyze" },
   { key: "review", label: "Review" },

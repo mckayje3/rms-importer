@@ -13,6 +13,9 @@ import type {
   BaselineInfo,
   SyncAnalysisResponse,
   SyncExecuteResponse,
+  ProjectDiscovery,
+  ProjectConfig,
+  ProjectConfigData,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -88,14 +91,18 @@ export const projects = {
 export const rms = {
   upload: async (
     registerFile: File,
-    assignmentsFile: File,
-    transmittalFile: File,
+    assignmentsFile?: File,
+    transmittalFile?: File,
     reportFile?: File
   ): Promise<RMSSession> => {
     const formData = new FormData();
     formData.append("submittal_register", registerFile);
-    formData.append("submittal_assignments", assignmentsFile);
-    formData.append("transmittal_log", transmittalFile);
+    if (assignmentsFile) {
+      formData.append("submittal_assignments", assignmentsFile);
+    }
+    if (transmittalFile) {
+      formData.append("transmittal_log", transmittalFile);
+    }
     if (reportFile) {
       formData.append("transmittal_report", reportFile);
     }
@@ -291,6 +298,37 @@ export const sync = {
         apply_updates: options.updates,
         apply_file_uploads: options.files,
       }),
+    });
+  },
+};
+
+// Setup endpoints
+export const setup = {
+  discover: async (projectId: number, companyId: number): Promise<ProjectDiscovery> => {
+    return fetchAPI(`/setup/projects/${projectId}/discover?company_id=${companyId}`);
+  },
+
+  getConfig: async (projectId: number): Promise<ProjectConfig> => {
+    return fetchAPI(`/setup/projects/${projectId}/config`);
+  },
+
+  saveConfig: async (
+    projectId: number,
+    companyId: number,
+    configData: ProjectConfigData
+  ): Promise<{ status: string; project_id: number }> => {
+    return fetchAPI(`/setup/projects/${projectId}/config`, {
+      method: "POST",
+      body: JSON.stringify({
+        company_id: String(companyId),
+        config_data: configData,
+      }),
+    });
+  },
+
+  deleteConfig: async (projectId: number): Promise<{ status: string }> => {
+    return fetchAPI(`/setup/projects/${projectId}/config`, {
+      method: "DELETE",
     });
   },
 };

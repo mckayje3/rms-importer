@@ -24,12 +24,15 @@ _contractor_mappings: dict[str, ContractorLookup] = {}
 @router.post("/validate")
 async def validate_rms_files(
     submittal_register: UploadFile = File(...),
-    submittal_assignments: UploadFile = File(...),
-    transmittal_log: UploadFile = File(...),
+    submittal_assignments: Optional[UploadFile] = File(None),
+    transmittal_log: Optional[UploadFile] = File(None),
     transmittal_report: Optional[UploadFile] = File(None),
 ) -> dict:
     """
     Validate RMS export files without parsing.
+
+    Only the Submittal Register is required. Other files are optional
+    and add additional data (assignments, revisions, QA codes).
 
     Use this to check files before upload. Returns detailed
     validation results with actionable error messages.
@@ -38,9 +41,8 @@ async def validate_rms_files(
 
     # Read file contents
     register_content = await submittal_register.read()
-    assignments_content = await submittal_assignments.read()
-    transmittal_content = await transmittal_log.read()
-
+    assignments_content = await submittal_assignments.read() if submittal_assignments else None
+    transmittal_content = await transmittal_log.read() if transmittal_log else None
     report_content = await transmittal_report.read() if transmittal_report else None
 
     result = validator.validate_all(
@@ -56,26 +58,29 @@ async def validate_rms_files(
 @router.post("/upload")
 async def upload_rms_files(
     submittal_register: UploadFile = File(...),
-    submittal_assignments: UploadFile = File(...),
-    transmittal_log: UploadFile = File(...),
+    submittal_assignments: Optional[UploadFile] = File(None),
+    transmittal_log: Optional[UploadFile] = File(None),
     transmittal_report: Optional[UploadFile] = File(None),
     skip_validation: bool = False,
 ) -> dict:
     """
     Upload and parse RMS export files.
 
+    Only the Submittal Register is required. Other files are optional
+    and add additional data (assignments, revisions, QA codes).
+
     Returns a session ID to reference the parsed data.
     Files are validated before parsing unless skip_validation=true.
     """
     # Read file contents
     register_content = await submittal_register.read()
-    assignments_content = await submittal_assignments.read()
-    transmittal_content = await transmittal_log.read()
+    assignments_content = await submittal_assignments.read() if submittal_assignments else None
+    transmittal_content = await transmittal_log.read() if transmittal_log else None
     report_content = await transmittal_report.read() if transmittal_report else None
 
     import logging
     logger = logging.getLogger(__name__)
-    logger.warning(f"Upload: register={len(register_content)}b, assignments={len(assignments_content)}b, transmittal={len(transmittal_content)}b, report={len(report_content) if report_content else 'None'}b")
+    logger.warning(f"Upload: register={len(register_content)}b, assignments={len(assignments_content) if assignments_content else 'None'}b, transmittal={len(transmittal_content) if transmittal_content else 'None'}b, report={len(report_content) if report_content else 'None'}b")
     logger.warning(f"Upload: transmittal_report param={transmittal_report}, filename={transmittal_report.filename if transmittal_report else 'None'}")
 
     # Validate first (unless skipped)

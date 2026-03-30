@@ -7,3 +7,4 @@ export { AnalysisView } from "./AnalysisView";
 export { ContractorMapping } from "./ContractorMapping";
 export { ContractorMatchReview } from "./ContractorMatchReview";
 export { SyncView } from "./SyncView";
+export { ProjectSetup } from "./ProjectSetup";
