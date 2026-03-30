@@ -238,10 +238,14 @@ class ProcoreAPI:
         Returns list of custom field definitions with id, label, and field_type.
         """
         try:
+            logger.warning(f"Fetching custom fields: company_id={self.company_id}")
             result = await self._get(
                 f"/rest/v1.0/companies/{self.company_id}/custom_fields",
                 params={"tool_name": "submittals"},
             )
+            logger.warning(f"Custom fields response: type={type(result).__name__}, len={len(result) if isinstance(result, list) else 'N/A'}")
+            if isinstance(result, list) and result:
+                logger.warning(f"First custom field entry keys: {list(result[0].keys()) if result else 'empty'}")
             custom_fields = []
             if isinstance(result, list):
                 for cf in result:

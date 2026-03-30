@@ -97,7 +97,11 @@ export function ProjectSetup({ projectId, companyId, onSetupComplete, onAutoSkip
   };
 
   const customFields = discovery?.custom_fields || [];
-  const availableStatuses = discovery?.statuses || ["Draft", "Open", "Closed"];
+  const rawStatuses = discovery?.statuses || [{ name: "Draft" }, { name: "Open" }, { name: "Closed" }];
+  // Normalize: backend may return strings or {name, id} objects
+  const availableStatuses = rawStatuses.map((s: string | { name: string }) =>
+    typeof s === "string" ? s : s.name
+  );
   const hasCustomFields = customFields.length > 0;
   const hasParagraphSuggestion = customFields.some(cf => cf.label.toLowerCase().includes("paragraph"));
   const hasInfoSuggestion = customFields.some(cf => cf.label.toLowerCase().includes("info"));
