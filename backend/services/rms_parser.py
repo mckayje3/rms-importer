@@ -43,25 +43,36 @@ class RMSParser:
 
     def parse_all(
         self,
-        register_bytes: bytes,
+        register_bytes: bytes = None,
         assignments_bytes: Optional[bytes] = None,
         transmittal_report_bytes: Optional[bytes] = None,
+        register_report_bytes: Optional[bytes] = None,
     ) -> RMSParseResult:
-        """Parse all RMS export files. Only register is required."""
+        """Parse all RMS export files.
+
+        Either register_bytes or register_report_bytes is required.
+        The Register Report CSV replaces both Register and Assignments.
+        """
         errors = []
         warnings = []
 
-        # Parse register (required)
-        submittals, reg_errors = self._parse_register(register_bytes)
-        errors.extend(reg_errors)
-
-        # Parse assignments (optional)
+        submittals: list[RMSSubmittal] = []
         assignments: list[RMSAssignment] = []
-        if assignments_bytes:
-            assignments, assign_errors = self._parse_assignments(assignments_bytes)
-            errors.extend(assign_errors)
 
-        # Parse transmittal report (optional)
+        if register_report_bytes:
+            # Register Report replaces both Register and Assignments
+            submittals, assignments, report_errors = self._parse_register_report(register_report_bytes)
+            errors.extend(report_errors)
+        elif register_bytes:
+            # Original Register + optional Assignments
+            submittals, reg_errors = self._parse_register(register_bytes)
+            errors.extend(reg_errors)
+
+            if assignments_bytes:
+                assignments, assign_errors = self._parse_assignments(assignments_bytes)
+                errors.extend(assign_errors)
+
+        # Parse transmittal report (optional — adds revisions, dates, QA codes)
         transmittal_report: list[TransmittalReportEntry] = []
         if transmittal_report_bytes:
             transmittal_report, report_errors = self._parse_transmittal_report(transmittal_report_bytes)
@@ -157,6 +168,104 @@ class RMSParser:
             errors.append(f"Failed to parse Submittal Assignments: {str(e)}")
 
         return assignments, errors
+
+    def _parse_register_report(
+        self, file_bytes: bytes
+    ) -> tuple[list[RMSSubmittal], list[RMSAssignment], list[str]]:
+        """Parse Submittal Register Report CSV.
+
+        This single file replaces both the Submittal Register and Submittal Assignments.
+        It has a hierarchical format with section headers and data rows:
+        - Section header: "Section 03 30 00" or "Section 03 30 00 CAST-IN-PLACE CONCRETE"
+        - Data rows: 16 CSV columns (activity, transmittal, item, paragraph, desc, type, class, ...)
+        """
+        import csv
+        from datetime import datetime
+        from models.mappings import TYPE_TEXT_TO_SD
+
+        errors = []
+        submittals = []
+        assignments = []
+
+        try:
+            text = file_bytes.decode("utf-8-sig", errors="replace")
+
+            section_re = re.compile(r"^Section\s+([\d\s\.]+)")
+            current_section = None
+
+            reader = csv.reader(text.splitlines())
+            for row_num, row in enumerate(reader, 1):
+                if not row:
+                    continue
+
+                col1 = row[0].strip()
+
+                # Skip header rows (first 3 lines)
+                if row_num <= 3:
+                    continue
+
+                # Section header
+                section_match = section_re.match(col1)
+                if section_match:
+                    current_section = section_match.group(1).strip()
+                    continue
+
+                # Data row — item_no is in column 3 (index 2)
+                if current_section and len(row) >= 7:
+                    item_str = row[2].strip() if len(row) > 2 else ""
+                    if not item_str or not item_str.isdigit():
+                        continue
+
+                    item_no = int(item_str)
+                    paragraph = row[3].strip() if len(row) > 3 else None
+                    description = row[4].strip() if len(row) > 4 else ""
+                    type_text = row[5].strip() if len(row) > 5 else ""
+                    classification = row[6].strip() if len(row) > 6 else None
+
+                    # Map type text to SD number
+                    sd_no = TYPE_TEXT_TO_SD.get(type_text)
+
+                    # Government action (QA code + dates)
+                    qc_code = row[12].strip() if len(row) > 12 and row[12].strip() else None
+                    qa_code = row[14].strip() if len(row) > 14 and row[14].strip() else None
+
+                    # Activity code
+                    activity_no = col1 if col1 else None
+
+                    # Required for activity (use activity_no)
+                    required_for = activity_no
+
+                    try:
+                        submittal = RMSSubmittal(
+                            section=current_section,
+                            item_no=item_no,
+                            sd_no=sd_no,
+                            description=description,
+                            qc_code=qc_code,
+                            qa_code=qa_code,
+                            paragraph=paragraph if paragraph else None,
+                        )
+                        submittals.append(submittal)
+
+                        # Build assignment with classification (Info field)
+                        if classification and classification not in ("", "nan"):
+                            assignment = RMSAssignment(
+                                section=current_section,
+                                item_no=item_no,
+                                description=description,
+                                sd_no=sd_no,
+                                info_only=classification,
+                                required_for_activity=required_for,
+                            )
+                            assignments.append(assignment)
+
+                    except Exception as e:
+                        errors.append(f"Register Report row {row_num}: {str(e)}")
+
+        except Exception as e:
+            errors.append(f"Failed to parse Register Report: {str(e)}")
+
+        return submittals, assignments, errors
 
     def _parse_transmittal_report(
         self, file_bytes: bytes

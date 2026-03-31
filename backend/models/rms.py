@@ -18,6 +18,7 @@ class RMSSubmittal(BaseModel):
     date_out: Optional[date] = None  # Not used - dates come from Transmittal Log
     qa_code: Optional[str] = None  # A, B, C, D, E, F, G, X
     status: Optional[str] = None  # RMS status (Outstanding, Complete, In Review)
+    paragraph: Optional[str] = None  # Spec paragraph reference (e.g., "1.14", "3.4.1")
 
     @property
     def match_key(self) -> str:

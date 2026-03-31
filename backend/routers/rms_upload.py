@@ -23,25 +23,26 @@ _contractor_mappings: dict[str, ContractorLookup] = {}
 
 @router.post("/validate")
 async def validate_rms_files(
-    submittal_register: UploadFile = File(...),
+    submittal_register: Optional[UploadFile] = File(None),
     submittal_assignments: Optional[UploadFile] = File(None),
     transmittal_report: Optional[UploadFile] = File(None),
+    register_report: Optional[UploadFile] = File(None),
 ) -> dict:
     """
     Validate RMS export files without parsing.
 
-    Only the Submittal Register is required. Other files are optional
-    and add additional data (assignments, revisions, QA codes, dates).
-
-    Use this to check files before upload. Returns detailed
-    validation results with actionable error messages.
+    Either submittal_register or register_report is required.
+    The Register Report CSV replaces both Register and Assignments.
     """
+    if not submittal_register and not register_report:
+        raise HTTPException(status_code=400, detail="Either Submittal Register or Register Report is required")
+
     validator = RMSValidator()
 
-    # Read file contents
-    register_content = await submittal_register.read()
+    register_content = await submittal_register.read() if submittal_register else None
     assignments_content = await submittal_assignments.read() if submittal_assignments else None
     report_content = await transmittal_report.read() if transmittal_report else None
+    register_report_content = await register_report.read() if register_report else None
 
     result = validator.validate_all(
         register_bytes=register_content,
@@ -54,32 +55,34 @@ async def validate_rms_files(
 
 @router.post("/upload")
 async def upload_rms_files(
-    submittal_register: UploadFile = File(...),
+    submittal_register: Optional[UploadFile] = File(None),
     submittal_assignments: Optional[UploadFile] = File(None),
     transmittal_report: Optional[UploadFile] = File(None),
+    register_report: Optional[UploadFile] = File(None),
     skip_validation: bool = False,
 ) -> dict:
     """
     Upload and parse RMS export files.
 
-    Only the Submittal Register is required. Other files are optional
-    and add additional data (assignments, revisions, QA codes, dates).
-
-    Returns a session ID to reference the parsed data.
-    Files are validated before parsing unless skip_validation=true.
+    Either submittal_register or register_report is required.
+    The Register Report CSV replaces both Register and Assignments,
+    and includes paragraph references.
     """
-    # Read file contents
-    register_content = await submittal_register.read()
+    if not submittal_register and not register_report:
+        raise HTTPException(status_code=400, detail="Either Submittal Register or Register Report is required")
+
+    register_content = await submittal_register.read() if submittal_register else None
     assignments_content = await submittal_assignments.read() if submittal_assignments else None
     report_content = await transmittal_report.read() if transmittal_report else None
+    register_report_content = await register_report.read() if register_report else None
 
     import logging
     logger = logging.getLogger(__name__)
-    logger.warning(f"Upload: register={len(register_content)}b, assignments={len(assignments_content) if assignments_content else 'None'}b, report={len(report_content) if report_content else 'None'}b")
+    logger.warning(f"Upload: register={'%db' % len(register_content) if register_content else 'None'}, register_report={'%db' % len(register_report_content) if register_report_content else 'None'}, report={'%db' % len(report_content) if report_content else 'None'}")
 
     # Validate first (unless skipped)
     validation_result = None
-    if not skip_validation:
+    if not skip_validation and register_content:
         validator = RMSValidator()
         validation_result = validator.validate_all(
             register_bytes=register_content,
@@ -87,7 +90,6 @@ async def upload_rms_files(
             transmittal_report_bytes=report_content,
         )
 
-        # Block on validation errors
         if not validation_result.is_valid:
             raise HTTPException(
                 status_code=400,
@@ -104,6 +106,7 @@ async def upload_rms_files(
             register_bytes=register_content,
             assignments_bytes=assignments_content,
             transmittal_report_bytes=report_content,
+            register_report_bytes=register_report_content,
         )
 
         logger.warning(f"Parsed: {result.submittal_count} submittals, {len(result.transmittal_report)} report entries")

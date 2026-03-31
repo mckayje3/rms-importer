@@ -93,17 +93,23 @@ export const projects = {
 // RMS endpoints
 export const rms = {
   upload: async (
-    registerFile: File,
+    registerFile?: File,
     assignmentsFile?: File,
-    reportFile?: File
+    reportFile?: File,
+    registerReportFile?: File,
   ): Promise<RMSSession> => {
     const formData = new FormData();
-    formData.append("submittal_register", registerFile);
+    if (registerFile) {
+      formData.append("submittal_register", registerFile);
+    }
     if (assignmentsFile) {
       formData.append("submittal_assignments", assignmentsFile);
     }
     if (reportFile) {
       formData.append("transmittal_report", reportFile);
+    }
+    if (registerReportFile) {
+      formData.append("register_report", registerReportFile);
     }
 
     const response = await fetch(`${API_BASE}/rms/upload`, {
