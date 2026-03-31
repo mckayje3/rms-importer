@@ -11,7 +11,6 @@ class FileType(Enum):
     """RMS file types."""
     SUBMITTAL_REGISTER = "submittal_register"
     SUBMITTAL_ASSIGNMENTS = "submittal_assignments"
-    TRANSMITTAL_LOG = "transmittal_log"
     TRANSMITTAL_REPORT = "transmittal_report"
 
 
@@ -102,16 +101,6 @@ class RMSValidator:
         ("required for activity", False, "P6 activity code"),
     ]
 
-    TRANSMITTAL_SCHEMA = [
-        ("section", True, "Spec section number"),
-        ("transmittal number", True, "Transmittal ID with optional revision (.1, .2)"),
-        ("submittal items included on transmittal", True, "Item numbers (comma-separated)"),
-        ("contractor prepared", False, "Date contractor prepared"),
-        ("government received", False, "Date government received"),
-        ("government returned", False, "Date government returned"),
-        ("contractor received", False, "Date contractor received"),
-    ]
-
     # Common column name variations/typos and their corrections
     COLUMN_ALIASES = {
         # Submittal Register
@@ -166,7 +155,6 @@ class RMSValidator:
         self,
         register_bytes: bytes,
         assignments_bytes: Optional[bytes] = None,
-        transmittal_bytes: Optional[bytes] = None,
         transmittal_report_bytes: Optional[bytes] = None,
     ) -> ValidationResult:
         """
@@ -203,19 +191,6 @@ class RMSValidator:
                 # Additional assignments-specific validation
                 issues.extend(self._validate_assignments_data(assign_df))
 
-        # Validate transmittal log (optional)
-        trans_df = None
-        if transmittal_bytes:
-            trans_issues, trans_df = self._validate_file(
-                transmittal_bytes, FileType.TRANSMITTAL_LOG, self.TRANSMITTAL_SCHEMA
-            )
-            issues.extend(trans_issues)
-            if trans_df is not None:
-                row_counts["transmittal_log"] = len(trans_df)
-                column_info["transmittal_log"] = list(trans_df.columns)
-                # Additional transmittal-specific validation
-                issues.extend(self._validate_transmittal_data(trans_df))
-
         # Validate Transmittal Report (optional)
         if transmittal_report_bytes:
             report_issues, report_count = self._validate_transmittal_report(
@@ -227,7 +202,7 @@ class RMSValidator:
 
         # Cross-file validation (only if we have at least register + one other file)
         if reg_df is not None:
-            issues.extend(self._validate_cross_references(reg_df, assign_df, trans_df))
+            issues.extend(self._validate_cross_references(reg_df, assign_df))
 
         # Determine overall validity (no errors = valid)
         is_valid = not any(i.severity == Severity.ERROR for i in issues)
@@ -412,50 +387,6 @@ class RMSValidator:
                     column="info only",
                     suggestion="Valid Info codes are: GA, FIO, S",
                 ))
-
-        return issues
-
-    def _validate_transmittal_data(self, df: pd.DataFrame) -> list[ValidationIssue]:
-        """Validate Transmittal Log data quality."""
-        issues = []
-        items_col = "submittal items included on transmittal"
-
-        # Check item numbers format
-        if items_col in df.columns:
-            for idx, row in df.iterrows():
-                items_str = str(row.get(items_col, ""))
-                if items_str and items_str.lower() != "nan":
-                    # Should be comma-separated integers
-                    parts = [p.strip() for p in items_str.split(",")]
-                    non_numeric = [p for p in parts if p and not p.isdigit()]
-                    if non_numeric:
-                        issues.append(ValidationIssue(
-                            severity=Severity.WARNING,
-                            message=f"Non-numeric item numbers: {non_numeric}",
-                            file_type=FileType.TRANSMITTAL_LOG,
-                            row=idx + 2,
-                            column=items_col,
-                            suggestion="Item numbers should be comma-separated integers (e.g., '1,2,3')",
-                        ))
-                        break  # Only report first occurrence
-
-        # Check transmittal number format
-        if "transmittal number" in df.columns:
-            import re
-            for idx, row in df.iterrows():
-                trans_num = str(row.get("transmittal number", ""))
-                if trans_num and trans_num.lower() != "nan":
-                    # Should match pattern like "01 50 00-1" or "01 50 00-1.2"
-                    if not re.match(r"[\d\s\.]+-\d+(\.\d+)?$", trans_num):
-                        issues.append(ValidationIssue(
-                            severity=Severity.WARNING,
-                            message=f"Unexpected transmittal number format: '{trans_num}'",
-                            file_type=FileType.TRANSMITTAL_LOG,
-                            row=idx + 2,
-                            column="transmittal number",
-                            suggestion="Expected format: 'XX XX XX-N' or 'XX XX XX-N.R' for revisions",
-                        ))
-                        break  # Only report first occurrence
 
         return issues
 
@@ -765,7 +696,6 @@ class RMSValidator:
         self,
         register_df: pd.DataFrame,
         assignments_df: Optional[pd.DataFrame],
-        transmittal_df: Optional[pd.DataFrame],
     ) -> list[ValidationIssue]:
         """Validate cross-references between files."""
         issues = []

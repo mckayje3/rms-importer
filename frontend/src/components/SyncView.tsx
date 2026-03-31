@@ -74,10 +74,8 @@ const FIELD_LABELS: Record<string, string> = {
   title: "Title",
   type: "Type",
   paragraph: "Paragraph",
-  contractor_prepared: "Contractor Prepared",
   government_received: "Government Received",
   government_returned: "Government Returned",
-  contractor_received: "Contractor Received",
 };
 
 export function SyncView({
@@ -116,7 +114,7 @@ export function SyncView({
   );
   const dateUpdates = plan.updates.filter((u) =>
     u.changes.some((c) =>
-      ["contractor_prepared", "government_received", "government_returned", "contractor_received"].includes(c.field)
+      ["government_received", "government_returned"].includes(c.field)
     )
   );
   const otherUpdates = plan.updates.filter(
@@ -362,7 +360,7 @@ export function SyncView({
                       <div className="pl-4 text-sm">
                         {u.changes
                           .filter((c) =>
-                            ["contractor_prepared", "government_received", "government_returned", "contractor_received"].includes(c.field)
+                            ["government_received", "government_returned"].includes(c.field)
                           )
                           .map((c) => (
                             <div key={c.field} className="text-gray-600">

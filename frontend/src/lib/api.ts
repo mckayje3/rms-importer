@@ -95,16 +95,12 @@ export const rms = {
   upload: async (
     registerFile: File,
     assignmentsFile?: File,
-    transmittalFile?: File,
     reportFile?: File
   ): Promise<RMSSession> => {
     const formData = new FormData();
     formData.append("submittal_register", registerFile);
     if (assignmentsFile) {
       formData.append("submittal_assignments", assignmentsFile);
-    }
-    if (transmittalFile) {
-      formData.append("transmittal_log", transmittalFile);
     }
     if (reportFile) {
       formData.append("transmittal_report", reportFile);

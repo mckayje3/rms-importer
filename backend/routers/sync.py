@@ -116,7 +116,8 @@ async def bootstrap_baseline(
 
     # Build RMS data into stored format and match against Procore
     service = SyncService(str(project_id), str(request.company_id), config=_config_data)
-    date_lookup = service._build_date_lookup(rms_data.transmittal_entries)
+    from services.date_lookup import DateLookup
+    date_lookup = DateLookup(rms_data.transmittal_report)
     info_lookup = service._build_info_lookup(rms_data)
     rms_submittals = service._rms_to_stored_format(rms_data, date_lookup, info_lookup)
 
@@ -176,7 +177,7 @@ async def analyze_sync(
                 and not f.startswith("~$")
             ]
 
-    logger.warning(f"Sync analyze: session has {rms_data.submittal_count} submittals, {len(rms_data.transmittal_entries)} log entries, {len(rms_data.transmittal_report)} report entries")
+    logger.warning(f"Sync analyze: session has {rms_data.submittal_count} submittals, {len(rms_data.transmittal_report)} report entries")
 
     # Load project config for status mapping
     _project_config = project_config_store.get_config(str(project_id))
@@ -362,9 +363,6 @@ async def execute_sync(
                     elif field in ["qa_code", "qc_code", "info"]:
                         # Custom fields
                         custom_fields[field] = value
-                    elif field == "contractor_prepared":
-                        update_data["custom_fields"] = update_data.get("custom_fields", {})
-                        # TODO: Map to actual custom field ID
                     else:
                         update_data[field] = value
 

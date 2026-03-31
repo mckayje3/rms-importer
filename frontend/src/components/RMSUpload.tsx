@@ -12,7 +12,6 @@ interface RMSUploadProps {
 export function RMSUpload({ onUploadComplete }: RMSUploadProps) {
   const [registerFile, setRegisterFile] = useState<File | null>(null);
   const [assignmentsFile, setAssignmentsFile] = useState<File | null>(null);
-  const [transmittalFile, setTransmittalFile] = useState<File | null>(null);
   const [reportFile, setReportFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +28,6 @@ export function RMSUpload({ onUploadComplete }: RMSUploadProps) {
       const session = await rms.upload(
         registerFile,
         assignmentsFile || undefined,
-        transmittalFile || undefined,
         reportFile || undefined
       );
       onUploadComplete(session);
@@ -70,15 +68,8 @@ export function RMSUpload({ onUploadComplete }: RMSUploadProps) {
         />
 
         <FileUpload
-          label="Transmittal Log (Optional)"
-          description="Adds revision tracking and date fields"
-          file={transmittalFile}
-          onFileSelect={setTransmittalFile}
-        />
-
-        <FileUpload
           label="Transmittal Report (Optional)"
-          description="Adds historical QA codes per revision"
+          description="Adds revisions, dates, and historical QA codes"
           accept=".csv,.xlsx,.xls"
           file={reportFile}
           onFileSelect={setReportFile}

@@ -25,14 +25,13 @@ _contractor_mappings: dict[str, ContractorLookup] = {}
 async def validate_rms_files(
     submittal_register: UploadFile = File(...),
     submittal_assignments: Optional[UploadFile] = File(None),
-    transmittal_log: Optional[UploadFile] = File(None),
     transmittal_report: Optional[UploadFile] = File(None),
 ) -> dict:
     """
     Validate RMS export files without parsing.
 
     Only the Submittal Register is required. Other files are optional
-    and add additional data (assignments, revisions, QA codes).
+    and add additional data (assignments, revisions, QA codes, dates).
 
     Use this to check files before upload. Returns detailed
     validation results with actionable error messages.
@@ -42,13 +41,11 @@ async def validate_rms_files(
     # Read file contents
     register_content = await submittal_register.read()
     assignments_content = await submittal_assignments.read() if submittal_assignments else None
-    transmittal_content = await transmittal_log.read() if transmittal_log else None
     report_content = await transmittal_report.read() if transmittal_report else None
 
     result = validator.validate_all(
         register_bytes=register_content,
         assignments_bytes=assignments_content,
-        transmittal_bytes=transmittal_content,
         transmittal_report_bytes=report_content,
     )
 
@@ -59,7 +56,6 @@ async def validate_rms_files(
 async def upload_rms_files(
     submittal_register: UploadFile = File(...),
     submittal_assignments: Optional[UploadFile] = File(None),
-    transmittal_log: Optional[UploadFile] = File(None),
     transmittal_report: Optional[UploadFile] = File(None),
     skip_validation: bool = False,
 ) -> dict:
@@ -67,7 +63,7 @@ async def upload_rms_files(
     Upload and parse RMS export files.
 
     Only the Submittal Register is required. Other files are optional
-    and add additional data (assignments, revisions, QA codes).
+    and add additional data (assignments, revisions, QA codes, dates).
 
     Returns a session ID to reference the parsed data.
     Files are validated before parsing unless skip_validation=true.
@@ -75,13 +71,11 @@ async def upload_rms_files(
     # Read file contents
     register_content = await submittal_register.read()
     assignments_content = await submittal_assignments.read() if submittal_assignments else None
-    transmittal_content = await transmittal_log.read() if transmittal_log else None
     report_content = await transmittal_report.read() if transmittal_report else None
 
     import logging
     logger = logging.getLogger(__name__)
-    logger.warning(f"Upload: register={len(register_content)}b, assignments={len(assignments_content) if assignments_content else 'None'}b, transmittal={len(transmittal_content) if transmittal_content else 'None'}b, report={len(report_content) if report_content else 'None'}b")
-    logger.warning(f"Upload: transmittal_report param={transmittal_report}, filename={transmittal_report.filename if transmittal_report else 'None'}")
+    logger.warning(f"Upload: register={len(register_content)}b, assignments={len(assignments_content) if assignments_content else 'None'}b, report={len(report_content) if report_content else 'None'}b")
 
     # Validate first (unless skipped)
     validation_result = None
@@ -90,7 +84,6 @@ async def upload_rms_files(
         validation_result = validator.validate_all(
             register_bytes=register_content,
             assignments_bytes=assignments_content,
-            transmittal_bytes=transmittal_content,
             transmittal_report_bytes=report_content,
         )
 
@@ -110,11 +103,10 @@ async def upload_rms_files(
         result = parser.parse_all(
             register_bytes=register_content,
             assignments_bytes=assignments_content,
-            transmittal_bytes=transmittal_content,
             transmittal_report_bytes=report_content,
         )
 
-        logger.warning(f"Parsed: {result.submittal_count} submittals, {len(result.transmittal_entries)} log entries, {len(result.transmittal_report)} report entries")
+        logger.warning(f"Parsed: {result.submittal_count} submittals, {len(result.transmittal_report)} report entries")
 
         # Store in session
         session_id = secrets.token_urlsafe(16)

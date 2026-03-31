@@ -48,25 +48,8 @@ class RMSAssignment(BaseModel):
     required_for_activity: Optional[str] = None
 
 
-class TransmittalLogEntry(BaseModel):
-    """Entry from Transmittal Log."""
-
-    section: str
-    transmittal_number: str  # e.g., "01 50 00-4.2"
-    item_numbers: list[int]  # Expanded from comma-separated
-    revision: int  # Parsed from .X suffix (0 if no suffix)
-    contractor_prepared: Optional[date] = None
-    government_received: Optional[date] = None
-    government_returned: Optional[date] = None
-    contractor_received: Optional[date] = None
-
-    def match_keys(self) -> list[str]:
-        """Generate match keys for all items in this transmittal."""
-        return [f"{self.section}-{item}-{self.revision}" for item in self.item_numbers]
-
-
 class TransmittalReportEntry(BaseModel):
-    """Entry from Transmittal Report (QA codes for all revisions)."""
+    """Entry from Transmittal Report (QA codes, dates, and revision info)."""
 
     section: str  # Spec section (e.g., "01 01 00")
     transmittal_no: int  # Transmittal number within section
@@ -74,6 +57,8 @@ class TransmittalReportEntry(BaseModel):
     item_no: int  # Item number
     qa_code: Optional[str] = None  # A, B, C, D, E, F, G, X
     classification: Optional[str] = None  # GA, FIO, S
+    government_received: Optional[date] = None  # Date In
+    government_returned: Optional[date] = None  # Date Out
 
     @property
     def match_key(self) -> str:
@@ -86,7 +71,6 @@ class RMSParseResult(BaseModel):
 
     submittals: list[RMSSubmittal]
     assignments: list[RMSAssignment]
-    transmittal_entries: list[TransmittalLogEntry]
     transmittal_report: list[TransmittalReportEntry] = []
 
     # Stats

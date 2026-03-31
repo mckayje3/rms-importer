@@ -80,8 +80,7 @@ class SyncPlan(BaseModel):
             )
             date_changes = sum(
                 1 for u in self.updates
-                if any(c.field in ["contractor_prepared", "government_received",
-                                    "government_returned", "contractor_received"]
+                if any(c.field in ["government_received", "government_returned"]
                        for c in u.changes)
             )
             other_changes = len(self.updates) - max(qa_changes, date_changes)
@@ -149,10 +148,8 @@ class StoredSubmittal(BaseModel):
     qc_code: Optional[str] = None
     info: Optional[str] = None
     status: Optional[str] = None
-    contractor_prepared: Optional[str] = None
     government_received: Optional[str] = None
     government_returned: Optional[str] = None
-    contractor_received: Optional[str] = None
     procore_id: Optional[int] = None
 
     @property

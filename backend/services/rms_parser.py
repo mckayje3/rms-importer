@@ -11,7 +11,6 @@ import openpyxl
 from models.rms import (
     RMSSubmittal,
     RMSAssignment,
-    TransmittalLogEntry,
     TransmittalReportEntry,
     RMSParseResult,
 )
@@ -42,26 +41,14 @@ class RMSParser:
         "required for activity",
     ]
 
-    TRANSMITTAL_COLUMNS = [
-        "section",
-        "transmittal number",
-        "submittal items included on transmittal",
-        "contractor prepared",
-        "government received",
-        "government returned",
-        "contractor received",
-    ]
-
     def parse_all(
         self,
         register_bytes: bytes,
         assignments_bytes: Optional[bytes] = None,
-        transmittal_bytes: Optional[bytes] = None,
         transmittal_report_bytes: Optional[bytes] = None,
     ) -> RMSParseResult:
         """Parse all RMS export files. Only register is required."""
         errors = []
-        warnings = []
 
         # Parse register (required)
         submittals, reg_errors = self._parse_register(register_bytes)
@@ -73,12 +60,6 @@ class RMSParser:
             assignments, assign_errors = self._parse_assignments(assignments_bytes)
             errors.extend(assign_errors)
 
-        # Parse transmittal log (optional)
-        transmittal_entries: list[TransmittalLogEntry] = []
-        if transmittal_bytes:
-            transmittal_entries, trans_errors = self._parse_transmittal_log(transmittal_bytes)
-            errors.extend(trans_errors)
-
         # Parse transmittal report (optional)
         transmittal_report: list[TransmittalReportEntry] = []
         if transmittal_report_bytes:
@@ -87,12 +68,14 @@ class RMSParser:
 
         # Calculate stats
         spec_sections = set(s.section for s in submittals)
-        revision_count = sum(1 for t in transmittal_entries if t.revision > 0)
+        revision_count = len(set(
+            (e.section, e.item_no, e.revision)
+            for e in transmittal_report if e.revision > 0
+        ))
 
         return RMSParseResult(
             submittals=submittals,
             assignments=assignments,
-            transmittal_entries=transmittal_entries,
             transmittal_report=transmittal_report,
             submittal_count=len(submittals),
             spec_section_count=len(spec_sections),
@@ -174,68 +157,6 @@ class RMSParser:
 
         return assignments, errors
 
-    def _parse_transmittal_log(
-        self, file_bytes: bytes
-    ) -> tuple[list[TransmittalLogEntry], list[str]]:
-        """Parse Transmittal Log Excel file."""
-        errors = []
-        entries = []
-
-        try:
-            df = pd.read_excel(io.BytesIO(file_bytes))
-            df.columns = [str(c).lower().strip() for c in df.columns]
-
-            # Validate columns
-            missing = self._check_columns(df.columns, self.TRANSMITTAL_COLUMNS[:3])
-            if missing:
-                errors.append(f"Transmittal Log missing columns: {missing}")
-                return [], errors
-
-            for idx, row in df.iterrows():
-                try:
-                    section = str(row.get("section", "")).strip()
-                    transmittal_num = str(row.get("transmittal number", "")).strip()
-                    items_str = str(row.get("submittal items included on transmittal", ""))
-
-                    if not section or not items_str:
-                        continue
-
-                    # Parse revision from transmittal number (e.g., "01 50 00-4.2" -> 2)
-                    revision = 0
-                    rev_match = re.search(r"\.(\d+)$", transmittal_num)
-                    if rev_match:
-                        revision = int(rev_match.group(1))
-
-                    # Parse item numbers (comma-separated)
-                    item_numbers = []
-                    for item in items_str.split(","):
-                        item = item.strip()
-                        if item.isdigit():
-                            item_numbers.append(int(item))
-
-                    if not item_numbers:
-                        continue
-
-                    entry = TransmittalLogEntry(
-                        section=section,
-                        transmittal_number=transmittal_num,
-                        item_numbers=item_numbers,
-                        revision=revision,
-                        contractor_prepared=self._parse_date(row.get("contractor prepared")),
-                        government_received=self._parse_date(row.get("government received")),
-                        government_returned=self._parse_date(row.get("government returned")),
-                        contractor_received=self._parse_date(row.get("contractor received")),
-                    )
-                    entries.append(entry)
-
-                except Exception as e:
-                    errors.append(f"Transmittal row {idx + 2}: {str(e)}")
-
-        except Exception as e:
-            errors.append(f"Failed to parse Transmittal Log: {str(e)}")
-
-        return entries, errors
-
     def _parse_transmittal_report(
         self, file_bytes: bytes
     ) -> tuple[list[TransmittalReportEntry], list[str]]:
@@ -261,6 +182,7 @@ class RMSParser:
     ) -> tuple[list[TransmittalReportEntry], list[str]]:
         """Parse Transmittal Report from CSV format."""
         import csv
+        from datetime import datetime
 
         errors = []
         entries = []
@@ -268,10 +190,20 @@ class RMSParser:
         header_re = re.compile(
             r"^Transmittal No\s+(.+?)-(\d+)(?:\.(\d+))?\s"
         )
+        date_in_re = re.compile(r"Date In:\s*(\d{2}/\d{2}/\d{4})")
+        date_out_re = re.compile(r"Date Out:\s*(\d{2}/\d{2}/\d{4})")
 
         current_section = None
         current_transmittal_no = None
         current_revision = 0
+        current_date_in = None
+        current_date_out = None
+
+        def parse_date_str(s: str):
+            try:
+                return datetime.strptime(s, "%m/%d/%Y").date()
+            except (ValueError, TypeError):
+                return None
 
         reader = csv.reader(text.splitlines())
         for row in reader:
@@ -286,13 +218,16 @@ class RMSParser:
                 current_section = header_match.group(1).strip()
                 current_transmittal_no = int(header_match.group(2))
                 current_revision = int(header_match.group(3)) if header_match.group(3) else 0
+
+                # Extract dates from header line
+                full_line = ",".join(row) if len(row) > 1 else col1
+                date_in_match = date_in_re.search(full_line)
+                date_out_match = date_out_re.search(full_line)
+                current_date_in = parse_date_str(date_in_match.group(1)) if date_in_match else None
+                current_date_out = parse_date_str(date_out_match.group(1)) if date_out_match else None
                 continue
 
             # Item data row (starts with a number)
-            # CSV columns (from header row 5):
-            # 0: Item No., 1: Description, 2: Type of Submittal,
-            # 3: Office, 4: Reviewer, 5: Classification, 6: QA Code
-            # Rows may have 6 columns (no QA code) or 7 (with QA code)
             if col1.isdigit() and current_section is not None:
                 item_no = int(col1)
                 qa_code = row[6].strip() if len(row) > 6 and row[6].strip() else None
@@ -305,6 +240,8 @@ class RMSParser:
                     item_no=item_no,
                     qa_code=qa_code,
                     classification=classification,
+                    government_received=current_date_in,
+                    government_returned=current_date_out,
                 ))
 
         return entries, errors
@@ -327,6 +264,18 @@ class RMSParser:
             current_section = None
             current_transmittal_no = None
             current_revision = 0
+            current_date_in = None
+            current_date_out = None
+
+            date_in_re = re.compile(r"Date In:\s*(\d{2}/\d{2}/\d{4})")
+            date_out_re = re.compile(r"Date Out:\s*(\d{2}/\d{2}/\d{4})")
+
+            def parse_date_str(s: str):
+                from datetime import datetime
+                try:
+                    return datetime.strptime(s, "%m/%d/%Y").date()
+                except (ValueError, TypeError):
+                    return None
 
             for row in ws.iter_rows(min_row=13, max_col=14, values_only=True):
                 col1 = str(row[0]).strip() if row[0] else ""
@@ -339,6 +288,12 @@ class RMSParser:
                     current_section = header_match.group(1).strip()
                     current_transmittal_no = int(header_match.group(2))
                     current_revision = int(header_match.group(3)) if header_match.group(3) else 0
+
+                    # Extract dates from header cell
+                    date_in_match = date_in_re.search(col1)
+                    date_out_match = date_out_re.search(col1)
+                    current_date_in = parse_date_str(date_in_match.group(1)) if date_in_match else None
+                    current_date_out = parse_date_str(date_out_match.group(1)) if date_out_match else None
                     continue
 
                 if col1.isdigit() and current_section is not None:
@@ -358,6 +313,8 @@ class RMSParser:
                         item_no=item_no,
                         qa_code=qa_code if qa_code else None,
                         classification=classification,
+                        government_received=current_date_in,
+                        government_returned=current_date_out,
                     ))
 
             wb.close()

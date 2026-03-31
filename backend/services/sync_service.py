@@ -2,7 +2,8 @@
 from typing import Optional
 from datetime import date
 
-from models.rms import RMSParseResult, RMSSubmittal, TransmittalLogEntry, TransmittalReportEntry
+from models.rms import RMSParseResult, RMSSubmittal, TransmittalReportEntry
+from services.date_lookup import DateLookup
 from models.mappings import map_status, map_status_for_config
 from models.sync import (
     SyncMode,
@@ -28,10 +29,8 @@ TRACKED_FIELDS = [
     "qa_code",
     "qc_code",
     "info",
-    "contractor_prepared",
     "government_received",
     "government_returned",
-    "contractor_received",
 ]
 
 
@@ -86,13 +85,9 @@ class SyncService:
         """Create a plan to import everything (no baseline exists)."""
         plan = SyncPlan(mode=SyncMode.FULL_MIGRATION)
 
-        # Build date lookup from transmittal entries
-        date_lookup = self._build_date_lookup(rms_data.transmittal_entries)
-
-        # Build info lookup from assignments
+        # Build lookups from Transmittal Report
+        date_lookup = DateLookup(rms_data.transmittal_report)
         info_lookup = self._build_info_lookup(rms_data)
-
-        # Build QA code lookup from Transmittal Report
         qa_lookup = self._build_qa_code_lookup(rms_data.transmittal_report)
 
         # All submittals need to be created
@@ -109,39 +104,44 @@ class SyncService:
                 revision=0,
                 title=submittal.description,
                 type=submittal.procore_type,
-                paragraph=None,  # Would need paragraph lookup
+                paragraph=None,
                 info=info_lookup.get(info_key),
                 qa_code=qa_code,
                 status=status,
             ))
 
-        # Add revisions from transmittal log
-        for entry in rms_data.transmittal_entries:
+        # Add revisions from Transmittal Report
+        # Group report entries by (section, item_no, revision) to deduplicate
+        seen_revisions = set()
+        for entry in rms_data.transmittal_report:
             if entry.revision > 0:
-                for item_no in entry.item_numbers:
-                    # Find the original submittal for title
-                    orig = next(
-                        (s for s in rms_data.submittals
-                         if s.section == entry.section and s.item_no == item_no),
-                        None
-                    )
-                    if orig:
-                        key = f"{entry.section}|{item_no}|{entry.revision}"
-                        info_key = f"{entry.section}|{item_no}"
-                        rev_qa = qa_lookup.get(key)
-                        rev_status = map_status_for_config(rev_qa, None, self.config)
-                        plan.creates.append(CreateAction(
-                            key=key,
-                            section=entry.section,
-                            item_no=item_no,
-                            revision=entry.revision,
-                            title=orig.description,
-                            type=orig.procore_type,
-                            paragraph=None,
-                            info=info_lookup.get(info_key),
-                            qa_code=rev_qa,
-                            status=rev_status,
-                        ))
+                rev_key = (entry.section, entry.item_no, entry.revision)
+                if rev_key in seen_revisions:
+                    continue
+                seen_revisions.add(rev_key)
+
+                orig = next(
+                    (s for s in rms_data.submittals
+                     if s.section == entry.section and s.item_no == entry.item_no),
+                    None
+                )
+                if orig:
+                    key = f"{entry.section}|{entry.item_no}|{entry.revision}"
+                    info_key = f"{entry.section}|{entry.item_no}"
+                    rev_qa = qa_lookup.get(key)
+                    rev_status = map_status_for_config(rev_qa, None, self.config)
+                    plan.creates.append(CreateAction(
+                        key=key,
+                        section=entry.section,
+                        item_no=entry.item_no,
+                        revision=entry.revision,
+                        title=orig.description,
+                        type=orig.procore_type,
+                        paragraph=None,
+                        info=info_lookup.get(info_key),
+                        qa_code=rev_qa,
+                        status=rev_status,
+                    ))
 
         # All files need to be uploaded
         file_to_keys = self.map_files_to_submittals(new_files, rms_data)
@@ -163,7 +163,7 @@ class SyncService:
         plan = SyncPlan(mode=SyncMode.INCREMENTAL)
 
         # Build lookups
-        date_lookup = self._build_date_lookup(rms_data.transmittal_entries)
+        date_lookup = DateLookup(rms_data.transmittal_report)
         info_lookup = self._build_info_lookup(rms_data)
 
         # Convert new RMS data to comparable format
@@ -282,18 +282,6 @@ class SyncService:
             return val.isoformat()
         return str(val).strip() if str(val).strip() else None
 
-    def _build_date_lookup(
-        self,
-        entries: list[TransmittalLogEntry],
-    ) -> dict[str, TransmittalLogEntry]:
-        """Build lookup from submittal key to transmittal entry (for dates)."""
-        lookup = {}
-        for entry in entries:
-            for item_no in entry.item_numbers:
-                key = f"{entry.section}|{item_no}|{entry.revision}"
-                lookup[key] = entry
-        return lookup
-
     def _build_info_lookup(self, rms_data: RMSParseResult) -> dict[str, str]:
         """Build lookup for Info field from assignments."""
         lookup = {}
@@ -317,7 +305,7 @@ class SyncService:
     def _rms_to_stored_format(
         self,
         rms_data: RMSParseResult,
-        date_lookup: dict[str, TransmittalLogEntry],
+        date_lookup: DateLookup,
         info_lookup: dict[str, str],
     ) -> dict[str, StoredSubmittal]:
         """Convert RMS parsed data to StoredSubmittal format."""
@@ -331,10 +319,7 @@ class SyncService:
             key = f"{sub.section}|{sub.item_no}|0"
             info_key = f"{sub.section}|{sub.item_no}"
 
-            # Get dates from transmittal log if available
-            trans_entry = date_lookup.get(key)
-
-            # QA code: prefer Transmittal Report, fall back to Register
+            dates = date_lookup.get(key)
             qa_code = qa_lookup.get(key, sub.qa_code)
 
             result[key] = StoredSubmittal(
@@ -343,49 +328,50 @@ class SyncService:
                 revision=0,
                 title=sub.description,
                 type=sub.procore_type,
-                paragraph=None,  # Would need separate paragraph lookup
+                paragraph=None,
                 qa_code=qa_code,
                 qc_code=sub.qc_code,
                 info=info_lookup.get(info_key),
                 status=map_status_for_config(qa_code, sub.status, self.config),
-                contractor_prepared=trans_entry.contractor_prepared.isoformat() if trans_entry and trans_entry.contractor_prepared else None,
-                government_received=trans_entry.government_received.isoformat() if trans_entry and trans_entry.government_received else None,
-                government_returned=trans_entry.government_returned.isoformat() if trans_entry and trans_entry.government_returned else None,
-                contractor_received=trans_entry.contractor_received.isoformat() if trans_entry and trans_entry.contractor_received else None,
+                government_received=dates.government_received.isoformat() if dates and dates.government_received else None,
+                government_returned=dates.government_returned.isoformat() if dates and dates.government_returned else None,
             )
 
-        # Revisions from transmittal log
-        for entry in rms_data.transmittal_entries:
+        # Revisions from Transmittal Report
+        seen_revisions = set()
+        for entry in rms_data.transmittal_report:
             if entry.revision > 0:
-                for item_no in entry.item_numbers:
-                    key = f"{entry.section}|{item_no}|{entry.revision}"
-                    info_key = f"{entry.section}|{item_no}"
+                rev_key = (entry.section, entry.item_no, entry.revision)
+                if rev_key in seen_revisions:
+                    continue
+                seen_revisions.add(rev_key)
 
-                    # Find original submittal for title/type
-                    orig = next(
-                        (s for s in rms_data.submittals
-                         if s.section == entry.section and s.item_no == item_no),
-                        None
+                key = f"{entry.section}|{entry.item_no}|{entry.revision}"
+                info_key = f"{entry.section}|{entry.item_no}"
+
+                orig = next(
+                    (s for s in rms_data.submittals
+                     if s.section == entry.section and s.item_no == entry.item_no),
+                    None
+                )
+
+                if orig:
+                    dates = date_lookup.get(key)
+                    rev_qa = qa_lookup.get(key)
+                    result[key] = StoredSubmittal(
+                        section=entry.section,
+                        item_no=entry.item_no,
+                        revision=entry.revision,
+                        title=orig.description,
+                        type=orig.procore_type,
+                        paragraph=None,
+                        qa_code=rev_qa,
+                        qc_code=None,
+                        info=info_lookup.get(info_key),
+                        status=map_status_for_config(rev_qa, None, self.config),
+                        government_received=dates.government_received.isoformat() if dates and dates.government_received else None,
+                        government_returned=dates.government_returned.isoformat() if dates and dates.government_returned else None,
                     )
-
-                    if orig:
-                        rev_qa = qa_lookup.get(key)
-                        result[key] = StoredSubmittal(
-                            section=entry.section,
-                            item_no=item_no,
-                            revision=entry.revision,
-                            title=orig.description,
-                            type=orig.procore_type,
-                            paragraph=None,
-                            qa_code=rev_qa,
-                            qc_code=None,
-                            info=info_lookup.get(info_key),
-                            status=map_status_for_config(rev_qa, None, self.config),
-                            contractor_prepared=entry.contractor_prepared.isoformat() if entry.contractor_prepared else None,
-                            government_received=entry.government_received.isoformat() if entry.government_received else None,
-                            government_returned=entry.government_returned.isoformat() if entry.government_returned else None,
-                            contractor_received=entry.contractor_received.isoformat() if entry.contractor_received else None,
-                        )
 
         return result
 
@@ -399,10 +385,18 @@ class SyncService:
 
         result = {}
 
-        # Build transmittal number to items lookup
-        trans_lookup = {}
-        for entry in rms_data.transmittal_entries:
-            trans_lookup[entry.transmittal_number] = entry
+        # Build transmittal number to item numbers lookup from Report
+        # Key: "section-transNum" or "section-transNum.rev" -> list of item numbers
+        trans_lookup: dict[str, list[int]] = {}
+        for entry in rms_data.transmittal_report:
+            if entry.revision > 0:
+                full_key = f"{entry.section}-{entry.transmittal_no}.{entry.revision}"
+            else:
+                full_key = f"{entry.section}-{entry.transmittal_no}"
+            if full_key not in trans_lookup:
+                trans_lookup[full_key] = []
+            if entry.item_no not in trans_lookup[full_key]:
+                trans_lookup[full_key].append(entry.item_no)
 
         for filename in filenames:
             # Pattern: Transmittal {Section}-{TransNum}.{Rev} - {Description}.pdf
@@ -415,18 +409,16 @@ class SyncService:
                 trans_num = match.group(2)
                 revision = int(match.group(3)) if match.group(3) else 0
 
-                # Build transmittal number to look up
                 if revision > 0:
                     full_trans_num = f"{section}-{trans_num}.{revision}"
                 else:
                     full_trans_num = f"{section}-{trans_num}"
 
-                # Look up the transmittal to get actual item numbers
-                entry = trans_lookup.get(full_trans_num)
-                if entry:
+                item_numbers = trans_lookup.get(full_trans_num)
+                if item_numbers:
                     keys = [
                         f"{section}|{item}|{revision}"
-                        for item in entry.item_numbers
+                        for item in item_numbers
                     ]
                     result[filename] = keys
                 else:
