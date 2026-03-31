@@ -10,6 +10,7 @@ import {
   SyncView,
   ProjectSetup,
 } from "@/components";
+import { FileJobProgress } from "@/components/FileJobProgress";
 import { auth, projects as projectsApi, submittals, sync, setup, health } from "@/lib/api";
 import { useEmbeddedContext } from "@/lib/useEmbeddedContext";
 import type {
@@ -262,6 +263,13 @@ export default function Home() {
         options
       );
       setSyncResult(result);
+      if (result.update_job_id) {
+        // Updates running in background — show result with job tracking
+        setSyncResult({
+          ...result,
+          status: `background`,
+        });
+      }
       setStep("complete");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sync failed");
@@ -510,10 +518,12 @@ export default function Home() {
               </svg>
             </div>
             <h2 className="text-2xl font-bold text-gray-900 mb-2">
-              Import Complete!
+              {syncResult?.update_job_id ? "Sync In Progress" : "Import Complete!"}
             </h2>
             <p className="text-gray-600 mb-6">
-              Your RMS data has been imported to Procore.
+              {syncResult?.update_job_id
+                ? "Creates completed. Updates are running in the background."
+                : "Your RMS data has been imported to Procore."}
             </p>
 
             {syncResult && (
@@ -565,6 +575,16 @@ export default function Home() {
                     <p className="text-xs text-gray-500 mt-2">Baseline updated for next sync.</p>
                   )}
                 </div>
+              </div>
+            )}
+
+            {syncResult?.update_job_id && project && (
+              <div className="max-w-md mx-auto mb-6">
+                <FileJobProgress
+                  projectId={project.id}
+                  jobId={syncResult.update_job_id}
+                  onComplete={() => {}}
+                />
               </div>
             )}
 

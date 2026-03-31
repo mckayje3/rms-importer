@@ -344,60 +344,97 @@ async def execute_sync(
                 errors.append(f"Failed to create {create.key}: {str(e)}")
 
     # Execute updates
+    BACKGROUND_THRESHOLD = 50  # More than this → run in background
+    update_job_id = None
+
     if request.apply_updates and plan.updates:
-        for update in plan.updates:
-            try:
-                # Build update payload from changes
-                update_data = {}
-                custom_fields = {}
+        if len(plan.updates) > BACKGROUND_THRESHOLD:
+            # Too many updates for inline — run in background
+            from services.sync_job import process_sync_updates
 
-                # Map internal field names to Procore custom field IDs
-                QA_CODE_FIELD = (
-                    _config_data["custom_fields"]["qa_code"]
-                    if _config_data and "custom_fields" in _config_data and "qa_code" in _config_data["custom_fields"]
-                    else "custom_field_598134325871360"
-                )
-                QC_CODE_FIELD = (
-                    _config_data["custom_fields"]["qc_code"]
-                    if _config_data and "custom_fields" in _config_data and "qc_code" in _config_data["custom_fields"]
-                    else "custom_field_598134325871359"
-                )
-                CUSTOM_FIELD_MAP = {
-                    "info": INFO_FIELD,
-                    "paragraph": PARAGRAPH_FIELD,
-                    "qa_code": QA_CODE_FIELD,
-                    "qc_code": QC_CODE_FIELD,
+            update_job_id = str(uuid.uuid4())
+            updates_data = [
+                {
+                    "key": u.key,
+                    "procore_id": u.procore_id,
+                    "changes": [{"field": c.field, "old_value": c.old_value, "new_value": c.new_value} for c in u.changes],
                 }
+                for u in plan.updates
+            ]
 
-                for change in update.changes:
-                    field = change.field
-                    value = change.new_value
+            file_job_store.create_job(
+                job_id=update_job_id,
+                project_id=str(project_id),
+                company_id=str(company_id),
+                session_id=x_auth_session,
+                manifest=updates_data,
+                total_files=len(updates_data),
+            )
 
-                    if field == "status":
-                        # Status requires status_id for the Procore API
-                        status_id = get_status_id(value, _config_data)
-                        if status_id:
-                            update_data["status_id"] = status_id
+            asyncio.create_task(process_sync_updates(
+                job_id=update_job_id,
+                project_id=project_id,
+                company_id=company_id,
+                session_id=x_auth_session,
+                updates_data=updates_data,
+                config_data=_config_data,
+                created_ids=created_ids,
+                rms_session_id=request.session_id,
+            ))
+
+            logger.info(f"Sync updates backgrounded: {len(plan.updates)} updates in job {update_job_id}")
+        else:
+            # Small number of updates — run inline
+            # Map internal field names to Procore custom field IDs
+            QA_CODE_FIELD = (
+                _config_data["custom_fields"]["qa_code"]
+                if _config_data and "custom_fields" in _config_data and "qa_code" in _config_data["custom_fields"]
+                else "custom_field_598134325871360"
+            )
+            QC_CODE_FIELD = (
+                _config_data["custom_fields"]["qc_code"]
+                if _config_data and "custom_fields" in _config_data and "qc_code" in _config_data["custom_fields"]
+                else "custom_field_598134325871359"
+            )
+            CUSTOM_FIELD_MAP = {
+                "info": INFO_FIELD,
+                "paragraph": PARAGRAPH_FIELD,
+                "qa_code": QA_CODE_FIELD,
+                "qc_code": QC_CODE_FIELD,
+            }
+
+            for update in plan.updates:
+                try:
+                    update_data = {}
+                    custom_fields = {}
+
+                    for change in update.changes:
+                        field = change.field
+                        value = change.new_value
+
+                        if field == "status":
+                            status_id = get_status_id(value, _config_data)
+                            if status_id:
+                                update_data["status_id"] = status_id
+                            else:
+                                logger.warning(f"No status_id found for '{value}' on {update.key}, skipping status update")
+                        elif field in CUSTOM_FIELD_MAP:
+                            custom_fields[CUSTOM_FIELD_MAP[field]] = value
                         else:
-                            logger.warning(f"No status_id found for '{value}' on {update.key}, skipping status update")
-                    elif field in CUSTOM_FIELD_MAP:
-                        # Custom fields need Procore field IDs
-                        custom_fields[CUSTOM_FIELD_MAP[field]] = value
-                    else:
-                        update_data[field] = value
+                            update_data[field] = value
 
-                if custom_fields:
-                    update_data["custom_fields"] = custom_fields
+                    if custom_fields:
+                        update_data["custom_fields"] = custom_fields
 
-                await api.update_submittal(project_id, update.procore_id, update_data)
-                updated_keys.append(update.key)
-                await asyncio.sleep(2)  # Rate limit protection
+                    await api.update_submittal(project_id, update.procore_id, update_data)
+                    updated_keys.append(update.key)
+                    await asyncio.sleep(2)
 
-            except RateLimitError as e:
-                errors.append(f"Rate limited updating {update.key}: {str(e)}")
-                break
-            except Exception as e:
-                errors.append(f"Failed to update {update.key}: {str(e)}")
+                except RateLimitError as e:
+                    errors.append(f"Rate limited updating {update.key}: {str(e)}")
+                    break
+                except Exception as e:
+                    errors.append(f"Failed to update {update.key}: {str(e)}")
 
     # Execute file uploads
     if request.apply_file_uploads and plan.file_uploads and settings.rms_files_path:
@@ -476,34 +513,47 @@ async def execute_sync(
         )
         flagged_count += 1
 
-    # Update baseline with results
-    if plan.mode == SyncMode.FULL_MIGRATION:
-        sync_service.save_baseline(rms_data, created_ids, uploaded_files)
-    else:
-        sync_service.update_baseline_with_results(
-            rms_data,
-            created_ids,
-            updated_keys,
-            uploaded_files,
-        )
+    # Update baseline with results (skip if updates are backgrounded — the job handles it)
+    if not update_job_id:
+        if plan.mode == SyncMode.FULL_MIGRATION:
+            sync_service.save_baseline(rms_data, created_ids, uploaded_files)
+        else:
+            sync_service.update_baseline_with_results(
+                rms_data,
+                created_ids,
+                updated_keys,
+                uploaded_files,
+            )
 
-    # Record in history
-    baseline_store.add_sync_history(
-        str(project_id),
-        plan.mode.value,
-        creates=len(created_ids),
-        updates=len(updated_keys),
-        file_uploads=len(uploaded_files),
-        errors=errors,
-        summary=plan.summary,
-    )
+        # Record in history
+        baseline_store.add_sync_history(
+            str(project_id),
+            plan.mode.value,
+            creates=len(created_ids),
+            updates=len(updated_keys),
+            file_uploads=len(uploaded_files),
+            errors=errors,
+            summary=plan.summary,
+        )
+    else:
+        # Background job will update baseline and record history when done
+        # But still save creates to baseline now so they're not lost
+        if created_ids:
+            sync_service.update_baseline_with_results(
+                rms_data,
+                created_ids,
+                [],  # no inline updates
+                uploaded_files,
+            )
 
     # Determine status
     was_rate_limited = api.rate_limit_hits > 0
     rate_limit_errors = [e for e in errors if "Rate limited" in e]
     other_errors = [e for e in errors if "Rate limited" not in e]
 
-    if rate_limit_errors and not other_errors:
+    if update_job_id:
+        status = "background"
+    elif rate_limit_errors and not other_errors:
         status = "rate_limited"
     elif errors:
         status = "partial"
@@ -527,7 +577,8 @@ async def execute_sync(
         errors=errors,
         rate_limited=was_rate_limited,
         rate_limit_message=rate_limit_msg,
-        baseline_updated=True,
+        baseline_updated=not bool(update_job_id),
+        update_job_id=update_job_id,
     )
 
 

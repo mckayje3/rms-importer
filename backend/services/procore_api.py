@@ -502,8 +502,9 @@ class ProcoreAPI:
         """
         Get all unique spec sections from project submittals.
 
-        Note: There's no direct API to list spec sections, so we extract
-        them from existing submittals.
+        Note: There's no direct Procore API to list spec sections independently,
+        so we extract them from existing submittals. The SpecMatcher service
+        handles fuzzy matching (normalized, base section) to compensate.
         """
         submittals = await self.get_submittals(project_id)
 

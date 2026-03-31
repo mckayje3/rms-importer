@@ -201,6 +201,7 @@ export interface SyncExecuteResponse {
   flagged: number;
   errors: string[];
   baseline_updated: boolean;
+  update_job_id?: string;
 }
 
 // File Upload Job Types

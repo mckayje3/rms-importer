@@ -125,7 +125,7 @@ class SyncExecuteRequest(BaseModel):
 
 class SyncExecuteResponse(BaseModel):
     """Response from sync execution."""
-    status: str  # "completed", "partial", "rate_limited", "failed"
+    status: str  # "completed", "partial", "rate_limited", "failed", "background"
     created: int = 0
     updated: int = 0
     files_uploaded: int = 0
@@ -134,6 +134,7 @@ class SyncExecuteResponse(BaseModel):
     rate_limited: bool = False
     rate_limit_message: Optional[str] = None
     baseline_updated: bool = False
+    update_job_id: Optional[str] = None  # Set when updates run in background
 
 
 class StoredSubmittal(BaseModel):
