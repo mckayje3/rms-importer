@@ -28,6 +28,8 @@ class CreateAction(BaseModel):
     type: Optional[str] = None
     paragraph: Optional[str] = None
     info: Optional[str] = None
+    qa_code: Optional[str] = None
+    status: Optional[str] = None  # Procore status name (e.g., "Closed", "Open")
 
 
 class UpdateAction(BaseModel):

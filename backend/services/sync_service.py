@@ -92,10 +92,15 @@ class SyncService:
         # Build info lookup from assignments
         info_lookup = self._build_info_lookup(rms_data)
 
+        # Build QA code lookup from Transmittal Report
+        qa_lookup = self._build_qa_code_lookup(rms_data.transmittal_report)
+
         # All submittals need to be created
         for submittal in rms_data.submittals:
             key = f"{submittal.section}|{submittal.item_no}|0"
             info_key = f"{submittal.section}|{submittal.item_no}"
+            qa_code = qa_lookup.get(key, submittal.qa_code)
+            status = map_status_for_config(qa_code, submittal.status, self.config)
 
             plan.creates.append(CreateAction(
                 key=key,
@@ -106,6 +111,8 @@ class SyncService:
                 type=submittal.procore_type,
                 paragraph=None,  # Would need paragraph lookup
                 info=info_lookup.get(info_key),
+                qa_code=qa_code,
+                status=status,
             ))
 
         # Add revisions from transmittal log
@@ -121,6 +128,8 @@ class SyncService:
                     if orig:
                         key = f"{entry.section}|{item_no}|{entry.revision}"
                         info_key = f"{entry.section}|{item_no}"
+                        rev_qa = qa_lookup.get(key)
+                        rev_status = map_status_for_config(rev_qa, None, self.config)
                         plan.creates.append(CreateAction(
                             key=key,
                             section=entry.section,
@@ -130,6 +139,8 @@ class SyncService:
                             type=orig.procore_type,
                             paragraph=None,
                             info=info_lookup.get(info_key),
+                            qa_code=rev_qa,
+                            status=rev_status,
                         ))
 
         # All files need to be uploaded
@@ -173,6 +184,8 @@ class SyncService:
                 type=sub.type,
                 paragraph=sub.paragraph,
                 info=sub.info,
+                qa_code=sub.qa_code,
+                status=sub.status,
             ))
 
         # Existing submittals - check for changes or missing Procore IDs
@@ -191,6 +204,8 @@ class SyncService:
                     type=new.type,
                     paragraph=new.paragraph,
                     info=new.info,
+                    qa_code=new.qa_code,
+                    status=new.status,
                 ))
                 continue
 

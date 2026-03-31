@@ -313,6 +313,12 @@ async def execute_sync(
                 if create.type:
                     submittal_data["submittal_type"] = create.type
 
+                # Set status from QA code
+                if create.status:
+                    status_id = get_status_id(create.status, _config_data)
+                    if status_id:
+                        submittal_data["status_id"] = status_id
+
                 # Add custom fields (Paragraph, Info — inherited from parent for revisions)
                 custom_fields = {}
                 if create.paragraph:
