@@ -26,6 +26,7 @@ from database import baseline_store, file_job_store
 from database import project_config_store
 from config import get_settings
 from models.mappings import get_status_id
+from services.spec_matcher import SpecMatcher
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -268,17 +269,16 @@ async def execute_sync(
 
     # Procore submittal type name -> id mapping (fetched lazily)
     type_id_cache: dict[str, int] = {}
-    spec_section_cache: dict[str, int] = {}
+    spec_matcher: Optional[SpecMatcher] = None
 
     if request.apply_creates and plan.creates:
-        # Pre-fetch Procore submittals to build spec section and type lookups
+        # Fetch all Procore spec sections (not just ones with submittals)
         try:
-            existing_submittals = await api.get_submittals(project_id)
-            for sub in existing_submittals:
-                if sub.specification_section:
-                    spec_section_cache[sub.specification_section.number] = sub.specification_section.id
-        except Exception:
-            pass  # Will create without spec section if lookup fails
+            procore_sections = await api.get_spec_sections(project_id)
+            spec_matcher = SpecMatcher(procore_sections)
+            logger.info(f"Loaded {len(procore_sections)} spec sections for matching")
+        except Exception as e:
+            logger.warning(f"Failed to load spec sections: {e}")
 
         # Sort: revision 0 first so parents exist before revisions
         sorted_creates = sorted(plan.creates, key=lambda c: (c.section, c.item_no, c.revision))
@@ -292,9 +292,11 @@ async def execute_sync(
                     "revision": create.revision,
                 }
 
-                # Add spec section
-                if create.section in spec_section_cache:
-                    submittal_data["specification_section_id"] = spec_section_cache[create.section]
+                # Add spec section using fuzzy matching
+                if spec_matcher and create.section:
+                    spec_id = spec_matcher.get_section_id(create.section)
+                    if spec_id:
+                        submittal_data["specification_section_id"] = spec_id
 
                 # For revisions, link to parent via source_submittal_log_id
                 if create.revision > 0:
@@ -349,6 +351,24 @@ async def execute_sync(
                 update_data = {}
                 custom_fields = {}
 
+                # Map internal field names to Procore custom field IDs
+                QA_CODE_FIELD = (
+                    _config_data["custom_fields"]["qa_code"]
+                    if _config_data and "custom_fields" in _config_data and "qa_code" in _config_data["custom_fields"]
+                    else "custom_field_598134325871360"
+                )
+                QC_CODE_FIELD = (
+                    _config_data["custom_fields"]["qc_code"]
+                    if _config_data and "custom_fields" in _config_data and "qc_code" in _config_data["custom_fields"]
+                    else "custom_field_598134325871359"
+                )
+                CUSTOM_FIELD_MAP = {
+                    "info": INFO_FIELD,
+                    "paragraph": PARAGRAPH_FIELD,
+                    "qa_code": QA_CODE_FIELD,
+                    "qc_code": QC_CODE_FIELD,
+                }
+
                 for change in update.changes:
                     field = change.field
                     value = change.new_value
@@ -360,9 +380,9 @@ async def execute_sync(
                             update_data["status_id"] = status_id
                         else:
                             logger.warning(f"No status_id found for '{value}' on {update.key}, skipping status update")
-                    elif field in ["qa_code", "qc_code", "info"]:
-                        # Custom fields
-                        custom_fields[field] = value
+                    elif field in CUSTOM_FIELD_MAP:
+                        # Custom fields need Procore field IDs
+                        custom_fields[CUSTOM_FIELD_MAP[field]] = value
                     else:
                         update_data[field] = value
 
