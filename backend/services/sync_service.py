@@ -448,7 +448,7 @@ class SyncService:
         uploaded_files: dict[str, int],
     ) -> None:
         """Save a new baseline after successful sync."""
-        date_lookup = self._build_date_lookup(rms_data.transmittal_entries)
+        date_lookup = DateLookup(rms_data.transmittal_report)
         info_lookup = self._build_info_lookup(rms_data)
 
         submittals = self._rms_to_stored_format(rms_data, date_lookup, info_lookup)
@@ -493,7 +493,7 @@ class SyncService:
         data = baseline["data"]
 
         # Build full submittal data from RMS for new creates
-        date_lookup = self._build_date_lookup(rms_data.transmittal_entries)
+        date_lookup = DateLookup(rms_data.transmittal_report)
         info_lookup = self._build_info_lookup(rms_data)
         new_submittals = self._rms_to_stored_format(rms_data, date_lookup, info_lookup)
 
