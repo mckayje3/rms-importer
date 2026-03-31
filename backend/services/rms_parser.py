@@ -49,6 +49,7 @@ class RMSParser:
     ) -> RMSParseResult:
         """Parse all RMS export files. Only register is required."""
         errors = []
+        warnings = []
 
         # Parse register (required)
         submittals, reg_errors = self._parse_register(register_bytes)

@@ -146,8 +146,11 @@ def map_sd_to_type(sd_no: str | None) -> str | None:
     if not sd_no:
         return None
 
-    # Normalize: remove spaces, pad to 2 digits
-    normalized = sd_no.strip().zfill(2)
+    # Normalize: strip whitespace, remove ".0" suffix from Excel float parsing, pad to 2 digits
+    normalized = sd_no.strip()
+    if normalized.endswith(".0"):
+        normalized = normalized[:-2]
+    normalized = normalized.zfill(2)
     return SD_TYPE_MAP.get(normalized)
 
 
