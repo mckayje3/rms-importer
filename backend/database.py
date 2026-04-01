@@ -63,30 +63,38 @@ def get_db_path() -> Path:
     return DB_PATH
 
 
+def _open_connection():
+    """Open a database connection — Turso via HTTP if available, local SQLite otherwise."""
+    global _turso_available
+    if _is_turso_available():
+        try:
+            import libsql
+            settings = get_settings()
+            conn = libsql.connect(
+                _turso_http_url(),
+                auth_token=settings.turso_auth_token,
+            )
+            # Test that the connection actually works
+            conn.execute("SELECT 1")
+            return conn
+        except Exception as e:
+            _turso_available = False
+            logger.warning(f"Turso connection failed, falling back to local SQLite: {e}")
+
+    conn = sqlite3.connect(get_db_path())
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 @contextmanager
 def get_connection():
     """Get a database connection — Turso via HTTP if available, local SQLite otherwise."""
-    if _is_turso_available():
-        import libsql
-
-        settings = get_settings()
-        conn = libsql.connect(
-            _turso_http_url(),
-            auth_token=settings.turso_auth_token,
-        )
-        try:
-            yield conn
-            conn.commit()
-        finally:
-            conn.close()
-    else:
-        conn = sqlite3.connect(get_db_path())
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-            conn.commit()
-        finally:
-            conn.close()
+    conn = _open_connection()
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def init_db():
