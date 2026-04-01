@@ -24,6 +24,15 @@ def _is_turso_configured() -> bool:
     return bool(settings.turso_database_url and settings.turso_auth_token)
 
 
+def _turso_http_url() -> str:
+    """Convert libsql:// URL to https:// for direct HTTP connection (no embedded replica)."""
+    settings = get_settings()
+    url = settings.turso_database_url
+    if url.startswith("libsql://"):
+        url = "https://" + url[len("libsql://"):]
+    return url
+
+
 def _is_turso_available() -> bool:
     """Check if Turso is configured and reachable."""
     global _turso_available
@@ -36,13 +45,12 @@ def _is_turso_available() -> bool:
         import libsql
         settings = get_settings()
         conn = libsql.connect(
-            "sync.db",
-            sync_url=settings.turso_database_url,
+            _turso_http_url(),
             auth_token=settings.turso_auth_token,
         )
         conn.close()
         _turso_available = True
-        logger.info("Turso database connected successfully")
+        logger.info("Turso database connected (direct HTTP)")
     except Exception as e:
         _turso_available = False
         logger.warning(f"Turso unavailable, falling back to local SQLite: {e}")
@@ -57,14 +65,13 @@ def get_db_path() -> Path:
 
 @contextmanager
 def get_connection():
-    """Get a database connection — Turso if available, local SQLite otherwise."""
+    """Get a database connection — Turso via HTTP if available, local SQLite otherwise."""
     if _is_turso_available():
         import libsql
 
         settings = get_settings()
         conn = libsql.connect(
-            "sync.db",
-            sync_url=settings.turso_database_url,
+            _turso_http_url(),
             auth_token=settings.turso_auth_token,
         )
         try:
