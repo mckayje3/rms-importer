@@ -1,6 +1,7 @@
 """Database for storing sync baselines. Supports local SQLite or Turso (libSQL) cloud."""
 import sqlite3
 import json
+import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -8,14 +9,44 @@ from contextlib import contextmanager
 
 from config import get_settings
 
+logger = logging.getLogger(__name__)
+
 # Database file location (local fallback)
 DB_PATH = Path(__file__).parent / "data" / "sync.db"
+
+# Track whether Turso is available (set to False on connection failure)
+_turso_available: bool | None = None
 
 
 def _is_turso_configured() -> bool:
     """Check if Turso cloud database is configured."""
     settings = get_settings()
     return bool(settings.turso_database_url and settings.turso_auth_token)
+
+
+def _is_turso_available() -> bool:
+    """Check if Turso is configured and reachable."""
+    global _turso_available
+    if not _is_turso_configured():
+        return False
+    if _turso_available is not None:
+        return _turso_available
+    # First call — test the connection
+    try:
+        import libsql
+        settings = get_settings()
+        conn = libsql.connect(
+            "sync.db",
+            sync_url=settings.turso_database_url,
+            auth_token=settings.turso_auth_token,
+        )
+        conn.close()
+        _turso_available = True
+        logger.info("Turso database connected successfully")
+    except Exception as e:
+        _turso_available = False
+        logger.warning(f"Turso unavailable, falling back to local SQLite: {e}")
+    return _turso_available
 
 
 def get_db_path() -> Path:
@@ -26,8 +57,8 @@ def get_db_path() -> Path:
 
 @contextmanager
 def get_connection():
-    """Get a database connection — Turso if configured, local SQLite otherwise."""
-    if _is_turso_configured():
+    """Get a database connection — Turso if available, local SQLite otherwise."""
+    if _is_turso_available():
         import libsql
 
         settings = get_settings()
