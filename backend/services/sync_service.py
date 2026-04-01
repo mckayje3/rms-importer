@@ -283,12 +283,12 @@ class SyncService:
         return str(val).strip() if str(val).strip() else None
 
     def _build_info_lookup(self, rms_data: RMSParseResult) -> dict[str, str]:
-        """Build lookup for Info field from assignments."""
+        """Build lookup for Info field from submittals."""
         lookup = {}
-        for assignment in rms_data.assignments:
-            key = f"{assignment.section}|{assignment.item_no}"
-            if assignment.info_only:
-                lookup[key] = assignment.info_only
+        for sub in rms_data.submittals:
+            key = f"{sub.section}|{sub.item_no}"
+            if sub.info:
+                lookup[key] = sub.info
         return lookup
 
     def _build_qa_code_lookup(

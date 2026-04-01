@@ -93,23 +93,13 @@ export const projects = {
 // RMS endpoints
 export const rms = {
   upload: async (
-    registerFile?: File,
-    assignmentsFile?: File,
+    registerReportFile: File,
     reportFile?: File,
-    registerReportFile?: File,
   ): Promise<RMSSession> => {
     const formData = new FormData();
-    if (registerFile) {
-      formData.append("submittal_register", registerFile);
-    }
-    if (assignmentsFile) {
-      formData.append("submittal_assignments", assignmentsFile);
-    }
+    formData.append("register_report", registerReportFile);
     if (reportFile) {
       formData.append("transmittal_report", reportFile);
-    }
-    if (registerReportFile) {
-      formData.append("register_report", registerReportFile);
     }
 
     const response = await fetch(`${API_BASE}/rms/upload`, {
@@ -393,6 +383,13 @@ export const sync = {
     jobId: string
   ): Promise<FileJobStatus> => {
     return fetchAPI(`/sync/projects/${projectId}/file-jobs/${jobId}`);
+  },
+
+  listJobs: async (
+    projectId: number,
+    limit: number = 5
+  ): Promise<{ project_id: number; jobs: FileJobStatus[] }> => {
+    return fetchAPI(`/sync/projects/${projectId}/file-jobs?limit=${limit}`);
   },
 };
 

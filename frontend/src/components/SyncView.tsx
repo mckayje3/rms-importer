@@ -448,6 +448,7 @@ export function SyncView({
                   <FileJobProgress
                     projectId={projectId!}
                     jobId={fileJobId}
+                    label="files"
                     onComplete={() => {}}
                   />
                 ) : projectId && rmsSessionId && companyId ? (

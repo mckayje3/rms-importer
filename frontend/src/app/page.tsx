@@ -79,6 +79,13 @@ export default function Home() {
           setIsAuthenticated(true);
           setStep("select-project");
           window.history.replaceState({}, "", "/");
+        } else {
+          // Check for existing session (e.g. page refresh)
+          const existingSession = sessionStorage.getItem("auth_session");
+          if (existingSession) {
+            setIsAuthenticated(true);
+            setStep("select-project");
+          }
         }
       } catch {
         setError("Cannot connect to backend server");
@@ -119,6 +126,33 @@ export default function Home() {
           return;
         }
 
+        // Check for active sync job before anything else
+        try {
+          const jobResult = await sync.listJobs(matchedProject.id, 1);
+          const activeJob = jobResult.jobs.find(
+            (j) => j.status === "queued" || j.status === "running"
+          );
+          if (activeJob) {
+            // Skip stats + setup — go straight to progress
+            setCompany(matchedCompany);
+            setProject(matchedProject);
+            setSyncResult({
+              status: "background",
+              created: 0,
+              updated: 0,
+              files_uploaded: 0,
+              flagged: 0,
+              errors: [],
+              baseline_updated: false,
+              update_job_id: activeJob.id,
+            });
+            setStep("complete");
+            return;
+          }
+        } catch {
+          // Ignore — fall through to normal flow
+        }
+
         // Fetch stats
         const stats = await projectsApi.getStats(matchedProject.id, matchedCompany.id);
 
@@ -136,6 +170,37 @@ export default function Home() {
     }
     autoSelect();
   }, [embedded, isAuthenticated, step, autoSelectingProject]);
+
+  // Check for in-progress sync jobs when entering a project
+  useEffect(() => {
+    if (!project || !isAuthenticated) return;
+    if (step !== "upload-rms" && step !== "project-setup") return;
+
+    async function checkActiveJobs() {
+      try {
+        const result = await sync.listJobs(project!.id, 1);
+        const activeJob = result.jobs.find(
+          (j) => j.status === "queued" || j.status === "running"
+        );
+        if (activeJob) {
+          setSyncResult({
+            status: "background",
+            created: 0,
+            updated: 0,
+            files_uploaded: 0,
+            flagged: 0,
+            errors: [],
+            baseline_updated: false,
+            update_job_id: activeJob.id,
+          });
+          setStep("complete");
+        }
+      } catch {
+        // Ignore — not critical
+      }
+    }
+    checkActiveJobs();
+  }, [project, isAuthenticated, step]);
 
   const handleLogin = async () => {
     try {
@@ -263,13 +328,6 @@ export default function Home() {
         options
       );
       setSyncResult(result);
-      if (result.update_job_id) {
-        // Updates running in background — show result with job tracking
-        setSyncResult({
-          ...result,
-          status: `background`,
-        });
-      }
       setStep("complete");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sync failed");
@@ -522,7 +580,7 @@ export default function Home() {
             </h2>
             <p className="text-gray-600 mb-6">
               {syncResult?.update_job_id
-                ? "Creates completed. Updates are running in the background."
+                ? "Your sync is running in the background. You can navigate away safely."
                 : "Your RMS data has been imported to Procore."}
             </p>
 
@@ -583,6 +641,7 @@ export default function Home() {
                 <FileJobProgress
                   projectId={project.id}
                   jobId={syncResult.update_job_id}
+                  label="submittals"
                   onComplete={() => {}}
                 />
               </div>

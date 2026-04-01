@@ -1,76 +1,35 @@
-"""RMS Excel file parser service."""
+"""RMS file parser service."""
 import io
 import re
-from datetime import datetime
 from typing import Optional
-
-import pandas as pd
 
 import openpyxl
 
 from models.rms import (
     RMSSubmittal,
-    RMSAssignment,
     TransmittalReportEntry,
     RMSParseResult,
 )
 
 
 class RMSParser:
-    """Parser for RMS export Excel files."""
-
-    # Expected column headers (case-insensitive matching)
-    REGISTER_COLUMNS = [
-        "section",
-        "item no",
-        "sd no",
-        "description",
-        "date in",
-        "qc code",
-        "date out",
-        "qa code",
-        "status",
-    ]
-
-    ASSIGNMENTS_COLUMNS = [
-        "section",
-        "item no",
-        "description",
-        "sd no",
-        "info only",
-        "required for activity",
-    ]
+    """Parser for RMS export files."""
 
     def parse_all(
         self,
-        register_bytes: bytes = None,
-        assignments_bytes: Optional[bytes] = None,
+        register_report_bytes: bytes,
         transmittal_report_bytes: Optional[bytes] = None,
-        register_report_bytes: Optional[bytes] = None,
     ) -> RMSParseResult:
-        """Parse all RMS export files.
+        """Parse RMS export files.
 
-        Either register_bytes or register_report_bytes is required.
-        The Register Report CSV replaces both Register and Assignments.
+        register_report_bytes is required (Register Report CSV).
+        transmittal_report_bytes is optional (adds revisions, dates, QA codes).
         """
         errors = []
         warnings = []
 
-        submittals: list[RMSSubmittal] = []
-        assignments: list[RMSAssignment] = []
-
-        if register_report_bytes:
-            # Register Report replaces both Register and Assignments
-            submittals, assignments, report_errors = self._parse_register_report(register_report_bytes)
-            errors.extend(report_errors)
-        elif register_bytes:
-            # Original Register + optional Assignments
-            submittals, reg_errors = self._parse_register(register_bytes)
-            errors.extend(reg_errors)
-
-            if assignments_bytes:
-                assignments, assign_errors = self._parse_assignments(assignments_bytes)
-                errors.extend(assign_errors)
+        submittals, report_errors = self._parse_register_report(register_report_bytes)
+        errors.extend(report_errors)
 
         # Parse transmittal report (optional — adds revisions, dates, QA codes)
         transmittal_report: list[TransmittalReportEntry] = []
@@ -87,7 +46,6 @@ class RMSParser:
 
         return RMSParseResult(
             submittals=submittals,
-            assignments=assignments,
             transmittal_report=transmittal_report,
             submittal_count=len(submittals),
             spec_section_count=len(spec_sections),
@@ -96,96 +54,20 @@ class RMSParser:
             warnings=warnings,
         )
 
-    def _parse_register(self, file_bytes: bytes) -> tuple[list[RMSSubmittal], list[str]]:
-        """Parse Submittal Register Excel file."""
-        errors = []
-        submittals = []
-
-        try:
-            df = pd.read_excel(io.BytesIO(file_bytes))
-            df.columns = [str(c).lower().strip() for c in df.columns]
-
-            # Validate columns
-            missing = self._check_columns(df.columns, self.REGISTER_COLUMNS[:4])  # First 4 required
-            if missing:
-                errors.append(f"Submittal Register missing columns: {missing}")
-                return [], errors
-
-            for idx, row in df.iterrows():
-                try:
-                    submittal = RMSSubmittal(
-                        section=str(row.get("section", "")).strip(),
-                        item_no=int(row.get("item no", 0)),
-                        sd_no=self._safe_str(row.get("sd no")),
-                        description=str(row.get("description", "")).strip(),
-                        date_in=self._parse_date(row.get("date in")),
-                        qc_code=self._safe_str(row.get("qc code")),
-                        date_out=self._parse_date(row.get("date out")),
-                        qa_code=self._safe_str(row.get("qa code")),
-                        status=self._safe_str(row.get("status")),
-                    )
-                    if submittal.section:  # Skip empty rows
-                        submittals.append(submittal)
-                except Exception as e:
-                    errors.append(f"Row {idx + 2}: {str(e)}")
-
-        except Exception as e:
-            errors.append(f"Failed to parse Submittal Register: {str(e)}")
-
-        return submittals, errors
-
-    def _parse_assignments(self, file_bytes: bytes) -> tuple[list[RMSAssignment], list[str]]:
-        """Parse Submittal Assignments Excel file."""
-        errors = []
-        assignments = []
-
-        try:
-            df = pd.read_excel(io.BytesIO(file_bytes))
-            df.columns = [str(c).lower().strip() for c in df.columns]
-
-            # Validate columns
-            missing = self._check_columns(df.columns, self.ASSIGNMENTS_COLUMNS[:3])
-            if missing:
-                errors.append(f"Submittal Assignments missing columns: {missing}")
-                return [], errors
-
-            for idx, row in df.iterrows():
-                try:
-                    assignment = RMSAssignment(
-                        section=str(row.get("section", "")).strip(),
-                        item_no=int(row.get("item no", 0)),
-                        description=str(row.get("description", "")).strip(),
-                        sd_no=self._safe_str(row.get("sd no")),
-                        info_only=self._safe_str(row.get("info only")),
-                        required_for_activity=self._safe_str(row.get("required for activity")),
-                    )
-                    if assignment.section:
-                        assignments.append(assignment)
-                except Exception as e:
-                    errors.append(f"Assignments row {idx + 2}: {str(e)}")
-
-        except Exception as e:
-            errors.append(f"Failed to parse Submittal Assignments: {str(e)}")
-
-        return assignments, errors
-
     def _parse_register_report(
         self, file_bytes: bytes
-    ) -> tuple[list[RMSSubmittal], list[RMSAssignment], list[str]]:
+    ) -> tuple[list[RMSSubmittal], list[str]]:
         """Parse Submittal Register Report CSV.
 
-        This single file replaces both the Submittal Register and Submittal Assignments.
-        It has a hierarchical format with section headers and data rows:
+        Hierarchical format with section headers and data rows:
         - Section header: "Section 03 30 00" or "Section 03 30 00 CAST-IN-PLACE CONCRETE"
         - Data rows: 16 CSV columns (activity, transmittal, item, paragraph, desc, type, class, ...)
         """
         import csv
-        from datetime import datetime
         from models.mappings import TYPE_TEXT_TO_SD
 
         errors = []
         submittals = []
-        assignments = []
 
         try:
             text = file_bytes.decode("utf-8-sig", errors="replace")
@@ -229,11 +111,8 @@ class RMSParser:
                     qc_code = row[12].strip() if len(row) > 12 and row[12].strip() else None
                     qa_code = row[14].strip() if len(row) > 14 and row[14].strip() else None
 
-                    # Activity code
-                    activity_no = col1 if col1 else None
-
-                    # Required for activity (use activity_no)
-                    required_for = activity_no
+                    # Classification (Info field: GA, FIO, S)
+                    info = classification if classification and classification not in ("", "nan") else None
 
                     try:
                         submittal = RMSSubmittal(
@@ -244,20 +123,9 @@ class RMSParser:
                             qc_code=qc_code,
                             qa_code=qa_code,
                             paragraph=paragraph if paragraph else None,
+                            info=info,
                         )
                         submittals.append(submittal)
-
-                        # Build assignment with classification (Info field)
-                        if classification and classification not in ("", "nan"):
-                            assignment = RMSAssignment(
-                                section=current_section,
-                                item_no=item_no,
-                                description=description,
-                                sd_no=sd_no,
-                                info_only=classification,
-                                required_for_activity=required_for,
-                            )
-                            assignments.append(assignment)
 
                     except Exception as e:
                         errors.append(f"Register Report row {row_num}: {str(e)}")
@@ -265,7 +133,7 @@ class RMSParser:
         except Exception as e:
             errors.append(f"Failed to parse Register Report: {str(e)}")
 
-        return submittals, assignments, errors
+        return submittals, errors
 
     def _parse_transmittal_report(
         self, file_bytes: bytes
@@ -434,39 +302,3 @@ class RMSParser:
 
         return entries, errors
 
-    def _check_columns(self, actual: list[str], required: list[str]) -> list[str]:
-        """Check if required columns exist. Returns missing columns."""
-        actual_lower = [c.lower() for c in actual]
-        missing = []
-        for req in required:
-            if req.lower() not in actual_lower:
-                missing.append(req)
-        return missing
-
-    def _safe_str(self, value) -> Optional[str]:
-        """Convert value to string, handling NaN/None."""
-        if pd.isna(value) or value is None:
-            return None
-        s = str(value).strip()
-        return s if s else None
-
-    def _parse_date(self, value) -> Optional[datetime]:
-        """Parse a date value from Excel."""
-        if pd.isna(value) or value is None:
-            return None
-
-        if isinstance(value, datetime):
-            return value.date()
-
-        try:
-            # Try common formats
-            s = str(value).strip()
-            for fmt in ["%m/%d/%Y", "%Y-%m-%d", "%m-%d-%Y", "%d/%m/%Y"]:
-                try:
-                    return datetime.strptime(s, fmt).date()
-                except ValueError:
-                    continue
-        except Exception:
-            pass
-
-        return None

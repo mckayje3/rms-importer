@@ -7,18 +7,17 @@ from .mappings import map_status, map_sd_to_type
 
 
 class RMSSubmittal(BaseModel):
-    """Submittal from RMS Submittal Register."""
+    """Submittal from RMS Register Report."""
 
     section: str  # Spec section (e.g., "01 50 00")
     item_no: int  # Item number
     sd_no: Optional[str] = None  # SD number (01-11)
     description: str
-    date_in: Optional[date] = None  # Not used - dates come from Transmittal Log
     qc_code: Optional[str] = None  # A, B, C, D
-    date_out: Optional[date] = None  # Not used - dates come from Transmittal Log
     qa_code: Optional[str] = None  # A, B, C, D, E, F, G, X
     status: Optional[str] = None  # RMS status (Outstanding, Complete, In Review)
     paragraph: Optional[str] = None  # Spec paragraph reference (e.g., "1.14", "3.4.1")
+    info: Optional[str] = None  # Classification (GA, FIO, S)
 
     @property
     def match_key(self) -> str:
@@ -36,17 +35,6 @@ class RMSSubmittal(BaseModel):
     def procore_type(self) -> Optional[str]:
         """Map SD No to Procore submittal type."""
         return map_sd_to_type(self.sd_no)
-
-
-class RMSAssignment(BaseModel):
-    """Assignment info from RMS Submittal Assignments."""
-
-    section: str
-    item_no: int
-    description: str
-    sd_no: Optional[str] = None
-    info_only: Optional[str] = None  # FIO, GA, S
-    required_for_activity: Optional[str] = None
 
 
 class TransmittalReportEntry(BaseModel):
@@ -71,7 +59,6 @@ class RMSParseResult(BaseModel):
     """Result of parsing RMS export files."""
 
     submittals: list[RMSSubmittal]
-    assignments: list[RMSAssignment]
     transmittal_report: list[TransmittalReportEntry] = []
 
     # Stats

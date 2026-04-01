@@ -4,13 +4,12 @@ import asyncio
 import logging
 import tempfile
 import uuid
-from pathlib import Path
 from fastapi import APIRouter, HTTPException, Header, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import Optional
 
 from services.sync_service import SyncService
-from services.procore_api import ProcoreAPI, RateLimitError
+from services.procore_api import ProcoreAPI
 from services.file_job import process_file_job
 from models.sync import (
     SyncPlan,
@@ -18,15 +17,11 @@ from models.sync import (
     SyncExecuteRequest,
     SyncExecuteResponse,
     BaselineInfo,
-    SyncMode,
 )
 from routers.rms_upload import get_rms_data
 from routers.auth import get_token
 from database import baseline_store, file_job_store
 from database import project_config_store
-from config import get_settings
-from models.mappings import get_status_id
-from services.spec_matcher import SpecMatcher
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -167,16 +162,7 @@ async def analyze_sync(
             detail="RMS session not found. Upload RMS files first.",
         )
 
-    # Build file list: use provided list, or scan RMS_FILES_PATH if configured
-    file_list = request.file_list
-    if not file_list:
-        settings = get_settings()
-        if settings.rms_files_path and os.path.isdir(settings.rms_files_path):
-            file_list = [
-                f for f in os.listdir(settings.rms_files_path)
-                if os.path.isfile(os.path.join(settings.rms_files_path, f))
-                and not f.startswith("~$")
-            ]
+    file_list = request.file_list or []
 
     logger.warning(f"Sync analyze: session has {rms_data.submittal_count} submittals, {len(rms_data.transmittal_report)} report entries")
 
@@ -206,18 +192,19 @@ async def execute_sync(
     company_id: int = Header(..., alias="X-Company-Id"),
 ) -> SyncExecuteResponse:
     """
-    Execute the sync plan.
+    Execute the sync plan in the background.
 
-    Creates new submittals, updates existing ones, and uploads files.
-    Updates the stored baseline after successful completion.
+    Creates a background job and returns immediately with a job_id.
+    The job handles creates, updates, file uploads, and baseline updates.
+    Poll /file-jobs/{job_id} for progress.
     """
-    # Get auth token
+    # Validate auth
     try:
-        access_token = get_token(x_auth_session)
+        get_token(x_auth_session)
     except HTTPException:
         raise HTTPException(status_code=401, detail="Invalid auth session")
 
-    # Get RMS data
+    # Validate RMS session exists
     try:
         rms_data = get_rms_data(request.session_id)
     except HTTPException:
@@ -226,359 +213,76 @@ async def execute_sync(
             detail="RMS session not found. Upload RMS files first.",
         )
 
-    # Load project-specific config (falls back to defaults if not configured)
+    # Load project config
     _project_config = project_config_store.get_config(str(project_id))
     _config_data = _project_config["config_data"] if _project_config else None
 
-    # Create services
+    # Generate the plan to count total operations
     sync_service = SyncService(str(project_id), str(company_id), config=_config_data)
-    api = ProcoreAPI(access_token, company_id=company_id)
 
-    # Build file list for plan generation
-    settings = get_settings()
-    file_list: list[str] = []
-    if settings.rms_files_path and os.path.isdir(settings.rms_files_path):
-        file_list = [
-            f for f in os.listdir(settings.rms_files_path)
-            if os.path.isfile(os.path.join(settings.rms_files_path, f))
-            and not f.startswith("~$")
-        ]
+    plan = sync_service.analyze(rms_data)
 
-    # Generate the plan
-    plan = sync_service.analyze(rms_data, file_list)
+    # Count total operations for progress tracking
+    total_ops = 0
+    if request.apply_creates:
+        total_ops += len(plan.creates)
+    if request.apply_updates:
+        total_ops += len(plan.updates)
+    if request.apply_file_uploads:
+        total_ops += len(plan.file_uploads)
 
-    # Track results
-    created_ids: dict[str, int] = {}
-    updated_keys: list[str] = []
-    uploaded_files: dict[str, int] = {}
-    errors: list[str] = []
+    if total_ops == 0:
+        # Nothing to do — return immediately
+        return SyncExecuteResponse(
+            status="completed",
+            created=0,
+            updated=0,
+            files_uploaded=0,
+            flagged=len(plan.flags),
+            errors=[],
+            baseline_updated=True,
+            update_job_id=None,
+        )
 
-    # Execute creates
+    # Create background job
+    from services.sync_job import process_sync_job
 
-    # Custom field IDs — from project config or Dobbins defaults
-    PARAGRAPH_FIELD = (
-        _config_data["custom_fields"]["paragraph"]
-        if _config_data and "custom_fields" in _config_data and "paragraph" in _config_data["custom_fields"]
-        else "custom_field_598134325870420"
+    job_id = str(uuid.uuid4())
+    file_job_store.create_job(
+        job_id=job_id,
+        project_id=str(project_id),
+        company_id=str(company_id),
+        session_id=x_auth_session,
+        manifest=[],  # Not needed — job rebuilds plan from RMS data
+        total_files=total_ops,
     )
-    INFO_FIELD = (
-        _config_data["custom_fields"]["info"]
-        if _config_data and "custom_fields" in _config_data and "info" in _config_data["custom_fields"]
-        else "custom_field_598134325871364"
+
+    asyncio.create_task(process_sync_job(
+        job_id=job_id,
+        project_id=project_id,
+        company_id=company_id,
+        session_id=x_auth_session,
+        rms_session_id=request.session_id,
+        config_data=_config_data,
+        apply_creates=request.apply_creates,
+        apply_updates=request.apply_updates,
+        apply_file_uploads=request.apply_file_uploads,
+    ))
+
+    logger.info(
+        f"Sync job {job_id} created: {len(plan.creates)} creates, "
+        f"{len(plan.updates)} updates, {len(plan.file_uploads)} files"
     )
-
-    # Procore submittal type name -> id mapping (fetched lazily)
-    type_id_cache: dict[str, int] = {}
-    spec_matcher: Optional[SpecMatcher] = None
-
-    if request.apply_creates and plan.creates:
-        # Fetch all Procore spec sections (not just ones with submittals)
-        try:
-            procore_sections = await api.get_spec_sections(project_id)
-            spec_matcher = SpecMatcher(procore_sections)
-            logger.info(f"Loaded {len(procore_sections)} spec sections for matching")
-        except Exception as e:
-            logger.warning(f"Failed to load spec sections: {e}")
-
-        # Sort: revision 0 first so parents exist before revisions
-        sorted_creates = sorted(plan.creates, key=lambda c: (c.section, c.item_no, c.revision))
-
-        for create in sorted_creates:
-            try:
-                # Build submittal data
-                submittal_data: dict = {
-                    "number": create.item_no,
-                    "title": create.title,
-                    "revision": create.revision,
-                }
-
-                # Add spec section using fuzzy matching
-                if spec_matcher and create.section:
-                    spec_id = spec_matcher.get_section_id(create.section)
-                    if spec_id:
-                        submittal_data["specification_section_id"] = spec_id
-
-                # For revisions, link to parent via source_submittal_log_id
-                if create.revision > 0:
-                    parent_key = f"{create.section}|{create.item_no}|0"
-                    parent_id = created_ids.get(parent_key)
-                    if not parent_id:
-                        # Look up from baseline
-                        baseline_data = baseline_store.get_baseline(str(project_id))
-                        if baseline_data:
-                            parent_sub = baseline_data["data"]["submittals"].get(parent_key)
-                            if parent_sub:
-                                parent_id = parent_sub.get("procore_id")
-                    if parent_id:
-                        submittal_data["source_submittal_log_id"] = parent_id
-
-                # Add type (inherit from parent for revisions — already set on CreateAction)
-                if create.type:
-                    submittal_data["submittal_type"] = create.type
-
-                # Set status from QA code
-                if create.status:
-                    status_id = get_status_id(create.status, _config_data)
-                    if status_id:
-                        submittal_data["status_id"] = status_id
-
-                # Add custom fields (Paragraph, Info — inherited from parent for revisions)
-                custom_fields = {}
-                if create.paragraph:
-                    custom_fields[PARAGRAPH_FIELD] = create.paragraph
-                if create.info:
-                    custom_fields[INFO_FIELD] = create.info
-                if custom_fields:
-                    submittal_data["custom_fields"] = custom_fields
-
-                result = await api.create_submittal(project_id, submittal_data)
-                if result and "id" in result:
-                    created_ids[create.key] = result["id"]
-
-                await asyncio.sleep(2)  # Rate limit protection
-
-            except RateLimitError as e:
-                errors.append(f"Rate limited creating {create.key}: {str(e)}")
-                break  # Stop creating — no point continuing if rate limited
-            except Exception as e:
-                errors.append(f"Failed to create {create.key}: {str(e)}")
-
-    # Execute updates
-    BACKGROUND_THRESHOLD = 50  # More than this → run in background
-    update_job_id = None
-
-    if request.apply_updates and plan.updates:
-        if len(plan.updates) > BACKGROUND_THRESHOLD:
-            # Too many updates for inline — run in background
-            from services.sync_job import process_sync_updates
-
-            update_job_id = str(uuid.uuid4())
-            updates_data = [
-                {
-                    "key": u.key,
-                    "procore_id": u.procore_id,
-                    "changes": [{"field": c.field, "old_value": c.old_value, "new_value": c.new_value} for c in u.changes],
-                }
-                for u in plan.updates
-            ]
-
-            file_job_store.create_job(
-                job_id=update_job_id,
-                project_id=str(project_id),
-                company_id=str(company_id),
-                session_id=x_auth_session,
-                manifest=updates_data,
-                total_files=len(updates_data),
-            )
-
-            asyncio.create_task(process_sync_updates(
-                job_id=update_job_id,
-                project_id=project_id,
-                company_id=company_id,
-                session_id=x_auth_session,
-                updates_data=updates_data,
-                config_data=_config_data,
-                created_ids=created_ids,
-                rms_session_id=request.session_id,
-            ))
-
-            logger.info(f"Sync updates backgrounded: {len(plan.updates)} updates in job {update_job_id}")
-        else:
-            # Small number of updates — run inline
-            # Map internal field names to Procore custom field IDs
-            QA_CODE_FIELD = (
-                _config_data["custom_fields"]["qa_code"]
-                if _config_data and "custom_fields" in _config_data and "qa_code" in _config_data["custom_fields"]
-                else "custom_field_598134325871360"
-            )
-            QC_CODE_FIELD = (
-                _config_data["custom_fields"]["qc_code"]
-                if _config_data and "custom_fields" in _config_data and "qc_code" in _config_data["custom_fields"]
-                else "custom_field_598134325871359"
-            )
-            CUSTOM_FIELD_MAP = {
-                "info": INFO_FIELD,
-                "paragraph": PARAGRAPH_FIELD,
-                "qa_code": QA_CODE_FIELD,
-                "qc_code": QC_CODE_FIELD,
-            }
-
-            for update in plan.updates:
-                try:
-                    update_data = {}
-                    custom_fields = {}
-
-                    for change in update.changes:
-                        field = change.field
-                        value = change.new_value
-
-                        if field == "status":
-                            status_id = get_status_id(value, _config_data)
-                            if status_id:
-                                update_data["status_id"] = status_id
-                            else:
-                                logger.warning(f"No status_id found for '{value}' on {update.key}, skipping status update")
-                        elif field in CUSTOM_FIELD_MAP:
-                            custom_fields[CUSTOM_FIELD_MAP[field]] = value
-                        else:
-                            update_data[field] = value
-
-                    if custom_fields:
-                        update_data["custom_fields"] = custom_fields
-
-                    await api.update_submittal(project_id, update.procore_id, update_data)
-                    updated_keys.append(update.key)
-                    await asyncio.sleep(2)
-
-                except RateLimitError as e:
-                    errors.append(f"Rate limited updating {update.key}: {str(e)}")
-                    break
-                except Exception as e:
-                    errors.append(f"Failed to update {update.key}: {str(e)}")
-
-    # Execute file uploads
-    if request.apply_file_uploads and plan.file_uploads and settings.rms_files_path:
-        # Build a lookup from submittal key to procore_id (from baseline + newly created)
-        baseline = baseline_store.get_baseline(str(project_id))
-        baseline_subs = baseline["data"]["submittals"] if baseline else {}
-
-        key_to_procore_id: dict[str, int] = {}
-        for key, sub in baseline_subs.items():
-            if sub.get("procore_id"):
-                key_to_procore_id[key] = sub["procore_id"]
-        # Add newly created submittals
-        for key, pid in created_ids.items():
-            key_to_procore_id[key] = pid
-
-        for file_action in plan.file_uploads:
-            file_path = os.path.join(settings.rms_files_path, file_action.filename)
-            if not os.path.isfile(file_path):
-                errors.append(f"File not found: {file_action.filename}")
-                continue
-
-            # Resolve target Procore IDs
-            target_ids = []
-            for submittal_key in file_action.submittal_keys:
-                procore_id = key_to_procore_id.get(submittal_key)
-                if not procore_id:
-                    errors.append(f"No Procore ID for {submittal_key}, skipping file {file_action.filename}")
-                else:
-                    target_ids.append(procore_id)
-
-            if not target_ids:
-                continue
-
-            # Upload file ONCE (steps 1-4: S3 + create doc + get prostore ID)
-            try:
-                prostore_file_id = await api.upload_file(project_id, file_path)
-                await asyncio.sleep(2)  # Rate limit protection
-            except RateLimitError as e:
-                errors.append(f"Rate limited uploading {file_action.filename}: {str(e)}")
-                break  # Stop all uploads
-            except Exception as e:
-                errors.append(f"Failed to upload {file_action.filename}: {str(e)}")
-                continue
-
-            # Attach to ALL target submittals (steps 5-6 only: GET + PATCH each)
-            attached_any = False
-            hit_rate_limit = False
-            for procore_id in target_ids:
-                try:
-                    await api.attach_file_to_submittal(
-                        project_id, procore_id, prostore_file_id
-                    )
-                    attached_any = True
-                    await asyncio.sleep(2)  # Rate limit protection
-                except RateLimitError as e:
-                    errors.append(f"Rate limited attaching {file_action.filename}: {str(e)}")
-                    hit_rate_limit = True
-                    break
-                except Exception as e:
-                    errors.append(f"Failed to attach {file_action.filename} to submittal {procore_id}: {str(e)}")
-
-            if attached_any:
-                uploaded_files[file_action.filename] = 1  # Track as uploaded
-
-            if hit_rate_limit:
-                break  # Stop all uploads
-
-    # Flag deleted items
-    flagged_count = 0
-    for flag in plan.flags:
-        baseline_store.flag_item(
-            str(project_id),
-            flag.key,
-            flag.procore_id,
-            flag.reason,
-        )
-        flagged_count += 1
-
-    # Update baseline with results (skip if updates are backgrounded — the job handles it)
-    if not update_job_id:
-        if plan.mode == SyncMode.FULL_MIGRATION:
-            sync_service.save_baseline(rms_data, created_ids, uploaded_files)
-        else:
-            sync_service.update_baseline_with_results(
-                rms_data,
-                created_ids,
-                updated_keys,
-                uploaded_files,
-            )
-
-        # Record in history
-        baseline_store.add_sync_history(
-            str(project_id),
-            plan.mode.value,
-            creates=len(created_ids),
-            updates=len(updated_keys),
-            file_uploads=len(uploaded_files),
-            errors=errors,
-            summary=plan.summary,
-        )
-    else:
-        # Background job will update baseline and record history when done
-        # But still save creates to baseline now so they're not lost
-        if created_ids:
-            sync_service.update_baseline_with_results(
-                rms_data,
-                created_ids,
-                [],  # no inline updates
-                uploaded_files,
-            )
-
-    # Determine status
-    was_rate_limited = api.rate_limit_hits > 0
-    rate_limit_errors = [e for e in errors if "Rate limited" in e]
-    other_errors = [e for e in errors if "Rate limited" not in e]
-
-    if update_job_id:
-        status = "background"
-    elif rate_limit_errors and not other_errors:
-        status = "rate_limited"
-    elif errors:
-        status = "partial"
-    else:
-        status = "completed"
-
-    rate_limit_msg = None
-    if was_rate_limited:
-        rate_limit_msg = (
-            f"Hit Procore rate limit {api.rate_limit_hits} time(s). "
-            f"{len(rate_limit_errors)} operation(s) failed after retries. "
-            "Run sync again to resume where it left off."
-        )
 
     return SyncExecuteResponse(
-        status=status,
-        created=len(created_ids),
-        updated=len(updated_keys),
-        files_uploaded=len(uploaded_files),
-        flagged=flagged_count,
-        errors=errors,
-        rate_limited=was_rate_limited,
-        rate_limit_message=rate_limit_msg,
-        baseline_updated=not bool(update_job_id),
-        update_job_id=update_job_id,
+        status="background",
+        created=0,
+        updated=0,
+        files_uploaded=0,
+        flagged=len(plan.flags),
+        errors=[],
+        baseline_updated=False,
+        update_job_id=job_id,
     )
 
 

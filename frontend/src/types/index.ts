@@ -225,6 +225,9 @@ export interface FileJobStatus {
     uploaded: number;
     total: number;
     errors: number;
+    created?: number;
+    updated?: number;
+    files?: number;
   } | null;
 }
 

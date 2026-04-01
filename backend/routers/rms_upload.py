@@ -6,7 +6,6 @@ from pydantic import BaseModel
 import secrets
 
 from services.rms_parser import RMSParser
-from services.rms_validator import RMSValidator
 from services.contractor_lookup import ContractorLookup
 from services.vendor_matching import VendorMatcher
 from services.procore_api import ProcoreAPI
@@ -21,92 +20,30 @@ _rms_sessions: dict[str, RMSParseResult] = {}
 _contractor_mappings: dict[str, ContractorLookup] = {}
 
 
-@router.post("/validate")
-async def validate_rms_files(
-    submittal_register: Optional[UploadFile] = File(None),
-    submittal_assignments: Optional[UploadFile] = File(None),
-    transmittal_report: Optional[UploadFile] = File(None),
-    register_report: Optional[UploadFile] = File(None),
-) -> dict:
-    """
-    Validate RMS export files without parsing.
-
-    Either submittal_register or register_report is required.
-    The Register Report CSV replaces both Register and Assignments.
-    """
-    if not submittal_register and not register_report:
-        raise HTTPException(status_code=400, detail="Either Submittal Register or Register Report is required")
-
-    validator = RMSValidator()
-
-    register_content = await submittal_register.read() if submittal_register else None
-    assignments_content = await submittal_assignments.read() if submittal_assignments else None
-    report_content = await transmittal_report.read() if transmittal_report else None
-    register_report_content = await register_report.read() if register_report else None
-
-    result = validator.validate_all(
-        register_bytes=register_content,
-        assignments_bytes=assignments_content,
-        transmittal_report_bytes=report_content,
-    )
-
-    return result.to_dict()
-
-
 @router.post("/upload")
 async def upload_rms_files(
-    submittal_register: Optional[UploadFile] = File(None),
-    submittal_assignments: Optional[UploadFile] = File(None),
+    register_report: UploadFile = File(...),
     transmittal_report: Optional[UploadFile] = File(None),
-    register_report: Optional[UploadFile] = File(None),
-    skip_validation: bool = False,
 ) -> dict:
     """
     Upload and parse RMS export files.
 
-    Either submittal_register or register_report is required.
-    The Register Report CSV replaces both Register and Assignments,
-    and includes paragraph references.
+    register_report (Register Report CSV) is required.
+    transmittal_report is optional (adds revisions, dates, QA codes).
     """
-    if not submittal_register and not register_report:
-        raise HTTPException(status_code=400, detail="Either Submittal Register or Register Report is required")
-
-    register_content = await submittal_register.read() if submittal_register else None
-    assignments_content = await submittal_assignments.read() if submittal_assignments else None
+    register_report_content = await register_report.read()
     report_content = await transmittal_report.read() if transmittal_report else None
-    register_report_content = await register_report.read() if register_report else None
 
     import logging
     logger = logging.getLogger(__name__)
-    logger.warning(f"Upload: register={'%db' % len(register_content) if register_content else 'None'}, register_report={'%db' % len(register_report_content) if register_report_content else 'None'}, report={'%db' % len(report_content) if report_content else 'None'}")
-
-    # Validate first (unless skipped)
-    validation_result = None
-    if not skip_validation and register_content:
-        validator = RMSValidator()
-        validation_result = validator.validate_all(
-            register_bytes=register_content,
-            assignments_bytes=assignments_content,
-            transmittal_report_bytes=report_content,
-        )
-
-        if not validation_result.is_valid:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "message": "Validation failed. Fix errors and try again.",
-                    "validation": validation_result.to_dict(),
-                },
-            )
+    logger.warning(f"Upload: register_report={len(register_report_content)}b, report={'%db' % len(report_content) if report_content else 'None'}")
 
     # Parse files
     parser = RMSParser()
     try:
         result = parser.parse_all(
-            register_bytes=register_content,
-            assignments_bytes=assignments_content,
-            transmittal_report_bytes=report_content,
             register_report_bytes=register_report_content,
+            transmittal_report_bytes=report_content,
         )
 
         logger.warning(f"Parsed: {result.submittal_count} submittals, {len(result.transmittal_report)} report entries")
@@ -115,7 +52,7 @@ async def upload_rms_files(
         session_id = secrets.token_urlsafe(16)
         _rms_sessions[session_id] = result
 
-        response = {
+        return {
             "session_id": session_id,
             "submittal_count": result.submittal_count,
             "spec_section_count": result.spec_section_count,
@@ -123,14 +60,6 @@ async def upload_rms_files(
             "errors": result.errors,
             "warnings": result.warnings,
         }
-
-        # Include validation warnings if we validated
-        if validation_result and validation_result.warnings:
-            response["validation_warnings"] = [
-                w.to_dict() for w in validation_result.warnings
-            ]
-
-        return response
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse files: {str(e)}")

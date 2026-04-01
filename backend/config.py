@@ -26,9 +26,6 @@ class Settings(BaseSettings):
     # Session secret for OAuth state
     session_secret: str = "change-me-in-production"
 
-    # RMS Files folder (local path for file sync; leave empty to skip file scanning)
-    rms_files_path: str = ""
-
     # Procore Documents folder ID for uploaded files (required for file uploads)
     procore_upload_folder_id: int = 0
 
