@@ -130,8 +130,20 @@ async def bootstrap_baseline(
 
     logger.warning(f"Bootstrap: matched={matched}, unmatched={unmatched}")
 
+    # Fetch existing files from Procore Documents folder
+    uploaded_files: dict[str, int] = {}
+    try:
+        from config import get_settings
+        settings = get_settings()
+        if settings.procore_upload_folder_id:
+            filenames = await api.list_folder_files(project_id, settings.procore_upload_folder_id)
+            uploaded_files = {name: 1 for name in filenames}
+            logger.warning(f"Bootstrap: found {len(uploaded_files)} files in upload folder")
+    except Exception as e:
+        logger.warning(f"Bootstrap: failed to list existing files: {e}")
+
     # Save baseline
-    service.save_baseline(rms_data, procore_ids, {})
+    service.save_baseline(rms_data, procore_ids, uploaded_files)
 
     return {
         "status": "bootstrapped",
@@ -139,6 +151,7 @@ async def bootstrap_baseline(
         "unmatched": unmatched,
         "total_rms": len(rms_submittals),
         "total_procore": len(procore_submittals),
+        "files_found": len(uploaded_files),
     }
 
 

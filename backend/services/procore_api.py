@@ -438,6 +438,37 @@ class ProcoreAPI:
 
         return doc["file"]["current_version"]["prostore_file"]["id"]
 
+    async def list_folder_files(
+        self,
+        project_id: int,
+        folder_id: int,
+    ) -> list[str]:
+        """List all filenames in a Procore Documents folder.
+
+        Paginates through all files. Returns list of filenames.
+        """
+        filenames = []
+        page = 1
+        while True:
+            docs = await self._get(
+                f"/rest/v1.0/projects/{project_id}/documents",
+                params={
+                    "filters[document_type]": "file",
+                    "filters[parent_id]": folder_id,
+                    "per_page": 300,
+                    "page": page,
+                },
+            )
+            for doc in docs:
+                name = doc.get("name", "")
+                if name:
+                    filenames.append(name)
+            if len(docs) < 300:
+                break
+            page += 1
+            await asyncio.sleep(1)
+        return filenames
+
     async def attach_file_to_submittal(
         self,
         project_id: int,
