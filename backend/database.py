@@ -661,3 +661,22 @@ session_store = SessionStore()
 baseline_store = BaselineStore()
 project_config_store = ProjectConfigStore()
 file_job_store = FileJobStore()
+
+
+def _cleanup_stale_jobs():
+    """Mark any running/queued jobs as failed on startup (they died with the old process)."""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE file_jobs SET status = 'failed', completed_at = ? "
+                "WHERE status IN ('running', 'queued')",
+                (datetime.utcnow().isoformat(),),
+            )
+            if cursor.rowcount > 0:
+                logger.info(f"Cleaned up {cursor.rowcount} stale job(s) from previous run")
+    except Exception as e:
+        logger.warning(f"Failed to clean up stale jobs: {e}")
+
+
+_cleanup_stale_jobs()
