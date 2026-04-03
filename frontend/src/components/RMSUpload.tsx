@@ -61,7 +61,7 @@ export function RMSUpload({ onUploadComplete }: RMSUploadProps) {
         <FileUpload
           label="Transmittal Report (Optional)"
           description="Adds revisions, dates, and historical QA codes for all transmittals"
-          accept=".csv,.xlsx,.xls"
+          accept=".csv"
           file={reportFile}
           onFileSelect={setReportFile}
         />
