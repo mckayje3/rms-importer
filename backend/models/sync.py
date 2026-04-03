@@ -120,6 +120,7 @@ class SyncExecuteRequest(BaseModel):
     session_id: str
     apply_creates: bool = True
     apply_updates: bool = True
+    apply_date_updates: bool = True
     apply_file_uploads: bool = True
 
 

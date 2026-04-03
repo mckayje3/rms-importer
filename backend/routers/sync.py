@@ -266,6 +266,7 @@ async def execute_sync(
         config_data=_config_data,
         apply_creates=request.apply_creates,
         apply_updates=request.apply_updates,
+        apply_date_updates=request.apply_date_updates,
         apply_file_uploads=request.apply_file_uploads,
     ))
 

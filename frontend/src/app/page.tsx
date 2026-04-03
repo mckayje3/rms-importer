@@ -313,6 +313,7 @@ export default function Home() {
   const handleSyncExecute = async (options: {
     creates: boolean;
     updates: boolean;
+    dates: boolean;
     files: boolean;
   }) => {
     if (!project || !company || !rmsSession) return;

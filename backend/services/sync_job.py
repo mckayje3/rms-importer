@@ -32,6 +32,7 @@ async def process_sync_job(
     config_data: Optional[dict],
     apply_creates: bool = True,
     apply_updates: bool = True,
+    apply_date_updates: bool = True,
     apply_file_uploads: bool = True,
 ) -> None:
     """
@@ -163,13 +164,23 @@ async def process_sync_job(
                 logger.warning(f"Job {job_id}: failed to save baseline after creates: {e}")
 
         # === UPDATES ===
+        DATE_FIELDS = {"government_received", "government_returned"}
         if apply_updates and plan.updates:
             for update in plan.updates:
+                # Filter out date changes if date updates are disabled
+                changes = update.changes
+                if not apply_date_updates:
+                    changes = [c for c in changes if c.field not in DATE_FIELDS]
+                if not changes:
+                    ops_completed += 1
+                    file_job_store.update_progress(job_id, uploaded_files=ops_completed, errors=errors)
+                    continue
+
                 try:
                     update_data = {}
                     custom_fields = {}
 
-                    for change in update.changes:
+                    for change in changes:
                         field = change.field
                         value = change.new_value
 

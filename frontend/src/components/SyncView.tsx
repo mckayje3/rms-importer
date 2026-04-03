@@ -57,7 +57,7 @@ interface BaselineInfo {
 interface SyncViewProps {
   baseline: BaselineInfo;
   plan: SyncPlan;
-  onExecute: (options: { creates: boolean; updates: boolean; files: boolean }) => void;
+  onExecute: (options: { creates: boolean; updates: boolean; dates: boolean; files: boolean }) => void;
   onBootstrap?: () => Promise<void>;
   onCancel: () => void;
   isExecuting: boolean;
@@ -92,7 +92,8 @@ export function SyncView({
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
   const [applyCreates, setApplyCreates] = useState(true);
   const [applyUpdates, setApplyUpdates] = useState(true);
-  const [applyFiles, setApplyFiles] = useState(true);
+  const [applyDates, setApplyDates] = useState(true);
+  const [applyFiles, setApplyFiles] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(false);
   const [fileJobId, setFileJobId] = useState<string | null>(null);
 
@@ -104,6 +105,7 @@ export function SyncView({
     onExecute({
       creates: applyCreates,
       updates: applyUpdates,
+      dates: applyDates,
       files: applyFiles,
     });
   };
@@ -336,9 +338,20 @@ export function SyncView({
                 onClick={() => toggleSection("dates")}
                 className="w-full flex items-center justify-between p-4 bg-blue-50 hover:bg-blue-100 transition-colors"
               >
-                <span className="font-medium text-blue-800">
-                  {dateUpdates.length} Date Updates
-                </span>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    checked={applyDates}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      setApplyDates(e.target.checked);
+                    }}
+                    className="w-4 h-4 text-blue-600"
+                  />
+                  <span className="font-medium text-blue-800">
+                    {dateUpdates.length} Date Updates
+                  </span>
+                </div>
                 <svg
                   className={`w-5 h-5 text-blue-600 transition-transform ${
                     expandedSection === "dates" ? "rotate-180" : ""
@@ -423,14 +436,25 @@ export function SyncView({
               onClick={() => toggleSection("files")}
               className="w-full flex items-center justify-between p-4 bg-purple-50 hover:bg-purple-100 transition-colors"
             >
-              <span className="font-medium text-purple-800">
-                File Uploads
-                {plan.files_already_uploaded > 0 && (
-                  <span className="ml-2 text-sm font-normal text-gray-500">
-                    ({plan.files_already_uploaded} already uploaded)
-                  </span>
-                )}
-              </span>
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={applyFiles}
+                  onChange={(e) => {
+                    e.stopPropagation();
+                    setApplyFiles(e.target.checked);
+                  }}
+                  className="w-4 h-4 text-purple-600"
+                />
+                <span className="font-medium text-purple-800">
+                  File Uploads
+                  {plan.files_already_uploaded > 0 && (
+                    <span className="ml-2 text-sm font-normal text-gray-500">
+                      ({plan.files_already_uploaded} already uploaded)
+                    </span>
+                  )}
+                </span>
+              </div>
               <svg
                 className={`w-5 h-5 text-purple-600 transition-transform ${
                   expandedSection === "files" ? "rotate-180" : ""

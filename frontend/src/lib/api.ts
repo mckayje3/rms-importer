@@ -280,7 +280,7 @@ export const sync = {
     projectId: number,
     sessionId: string,
     companyId: number,
-    options: { creates: boolean; updates: boolean; files: boolean }
+    options: { creates: boolean; updates: boolean; dates: boolean; files: boolean }
   ): Promise<SyncExecuteResponse> => {
     return fetchAPI(`/sync/projects/${projectId}/execute`, {
       method: "POST",
@@ -291,6 +291,7 @@ export const sync = {
         session_id: sessionId,
         apply_creates: options.creates,
         apply_updates: options.updates,
+        apply_date_updates: options.dates,
         apply_file_uploads: options.files,
       }),
     });
