@@ -11,8 +11,13 @@ from config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Database file location (local fallback)
-DB_PATH = Path(__file__).parent / "data" / "sync.db"
+# Database file location — use Railway volume if available, otherwise local
+import os
+_volume_path = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH")
+if _volume_path:
+    DB_PATH = Path(_volume_path) / "sync.db"
+else:
+    DB_PATH = Path(__file__).parent / "data" / "sync.db"
 
 # Track whether Turso is available (set to False on connection failure)
 _turso_available: bool | None = None
