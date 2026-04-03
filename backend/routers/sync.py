@@ -347,6 +347,46 @@ async def resolve_flagged_item(
     }
 
 
+class AddFilesRequest(BaseModel):
+    """Request to add existing filenames to the baseline."""
+    filenames: list[str]
+
+
+@router.post("/projects/{project_id}/add-existing-files")
+async def add_existing_files(
+    project_id: int,
+    request: AddFilesRequest,
+) -> dict:
+    """Add filenames to the baseline as already-uploaded (no actual upload)."""
+    baseline = baseline_store.get_baseline(str(project_id))
+    if not baseline:
+        raise HTTPException(status_code=404, detail="No baseline found for this project")
+
+    data = baseline["data"]
+    added = 0
+    for filename in request.filenames:
+        if filename not in data.get("files", {}):
+            data.setdefault("files", {})[filename] = {
+                "filename": filename,
+                "uploaded": True,
+                "procore_file_id": None,
+            }
+            added += 1
+
+    baseline_store.save_baseline(
+        str(project_id),
+        baseline["company_id"],
+        data,
+    )
+
+    return {
+        "status": "ok",
+        "added": added,
+        "already_existed": len(request.filenames) - added,
+        "total_files": len(data.get("files", {})),
+    }
+
+
 # === File Upload Endpoints ===
 
 
