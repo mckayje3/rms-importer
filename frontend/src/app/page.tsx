@@ -486,6 +486,18 @@ export default function Home() {
                 setSyncAnalysis(syncResult);
               }}
               onCancel={() => setStep("upload-rms")}
+              onDone={() => {
+                setSyncResult({
+                  status: "completed",
+                  created: 0,
+                  updated: 0,
+                  files_uploaded: 0,
+                  flagged: 0,
+                  errors: [],
+                  baseline_updated: true,
+                });
+                setStep("complete");
+              }}
               isExecuting={importing}
               projectId={project?.id}
               rmsSessionId={rmsSession?.session_id}

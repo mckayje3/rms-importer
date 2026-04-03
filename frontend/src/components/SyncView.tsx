@@ -60,6 +60,7 @@ interface SyncViewProps {
   onExecute: (options: { creates: boolean; updates: boolean; dates: boolean; files: boolean }) => void;
   onBootstrap?: () => Promise<void>;
   onCancel: () => void;
+  onDone?: () => void;
   isExecuting: boolean;
   projectId?: number;
   rmsSessionId?: string;
@@ -84,6 +85,7 @@ export function SyncView({
   onExecute,
   onBootstrap,
   onCancel,
+  onDone,
   isExecuting,
   projectId,
   rmsSessionId,
@@ -572,6 +574,18 @@ export function SyncView({
           </div>
         )}
       </div>
+
+      {/* Done button — shown when no submittal changes to apply */}
+      {!plan.has_changes && onDone && (
+        <div className="pt-4 border-t">
+          <button
+            onClick={onDone}
+            className="w-full px-4 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-colors"
+          >
+            Done
+          </button>
+        </div>
+      )}
     </div>
   );
 }
