@@ -190,7 +190,7 @@ export function SyncView({
         <p className="text-blue-700">{plan.summary}</p>
       </div>
 
-      {!plan.has_changes ? (
+      {!plan.has_changes && (
         <div className="text-center py-8">
           <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -200,7 +200,9 @@ export function SyncView({
           <h3 className="text-lg font-medium text-gray-900">Everything is in sync!</h3>
           <p className="text-gray-600 mt-1">No changes detected between RMS and baseline.</p>
         </div>
-      ) : (
+      )}
+
+      {plan.has_changes && (
         <>
           {/* New Submittals */}
           {plan.creates.length > 0 && (
@@ -441,67 +443,6 @@ export function SyncView({
             </div>
           )}
 
-          {/* File Uploads */}
-          <div className="border rounded-lg overflow-hidden">
-            <button
-              onClick={() => toggleSection("files")}
-              className="w-full flex items-center justify-between p-4 bg-purple-50 hover:bg-purple-100 transition-colors"
-            >
-              <div className="flex items-center gap-3">
-                <input
-                  type="checkbox"
-                  checked={applyFiles}
-                  onChange={(e) => {
-                    e.stopPropagation();
-                    setApplyFiles(e.target.checked);
-                  }}
-                  className="w-4 h-4 text-purple-600"
-                />
-                <span className="font-medium text-purple-800">
-                  File Uploads
-                  {plan.files_already_uploaded > 0 && (
-                    <span className="ml-2 text-sm font-normal text-gray-500">
-                      ({plan.files_already_uploaded} already uploaded)
-                    </span>
-                  )}
-                </span>
-              </div>
-              <svg
-                className={`w-5 h-5 text-purple-600 transition-transform ${
-                  expandedSection === "files" ? "rotate-180" : ""
-                }`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-            {expandedSection === "files" && (
-              <div className="p-4 border-t border-purple-200 space-y-3">
-                {fileJobId ? (
-                  <FileJobProgress
-                    projectId={projectId!}
-                    jobId={fileJobId}
-                    label="files"
-                    onComplete={() => {}}
-                  />
-                ) : projectId && rmsSessionId && companyId ? (
-                  <FolderFileUpload
-                    projectId={projectId}
-                    rmsSessionId={rmsSessionId}
-                    companyId={companyId}
-                    onUploadStarted={(jobId) => setFileJobId(jobId)}
-                  />
-                ) : (
-                  <p className="text-sm text-gray-500">
-                    File upload not available in this context.
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-
           {/* Flagged Items */}
           {plan.flags.length > 0 && (
             <div className="border border-orange-200 rounded-lg overflow-hidden">
@@ -581,6 +522,56 @@ export function SyncView({
           </div>
         </>
       )}
+
+      {/* File Uploads — always visible */}
+      <div className="border rounded-lg overflow-hidden">
+        <button
+          onClick={() => toggleSection("files")}
+          className="w-full flex items-center justify-between p-4 bg-purple-50 hover:bg-purple-100 transition-colors"
+        >
+          <span className="font-medium text-purple-800">
+            File Uploads
+            {plan.files_already_uploaded > 0 && (
+              <span className="ml-2 text-sm font-normal text-gray-500">
+                ({plan.files_already_uploaded} already uploaded)
+              </span>
+            )}
+          </span>
+          <svg
+            className={`w-5 h-5 text-purple-600 transition-transform ${
+              expandedSection === "files" ? "rotate-180" : ""
+            }`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {expandedSection === "files" && (
+          <div className="p-4 border-t border-purple-200 space-y-3">
+            {fileJobId ? (
+              <FileJobProgress
+                projectId={projectId!}
+                jobId={fileJobId}
+                label="files"
+                onComplete={() => {}}
+              />
+            ) : projectId && rmsSessionId && companyId ? (
+              <FolderFileUpload
+                projectId={projectId}
+                rmsSessionId={rmsSessionId}
+                companyId={companyId}
+                onUploadStarted={(jobId) => setFileJobId(jobId)}
+              />
+            ) : (
+              <p className="text-sm text-gray-500">
+                File upload not available in this context.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
