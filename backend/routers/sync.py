@@ -482,12 +482,14 @@ async def upload_files(
 
     try:
         for upload_file in files:
-            file_path = os.path.join(temp_dir, upload_file.filename)
+            # Strip folder prefix from browser uploads (e.g. "RMS Files/file.pdf" -> "file.pdf")
+            filename = os.path.basename(upload_file.filename)
+            file_path = os.path.join(temp_dir, filename)
             content = await upload_file.read()
             with open(file_path, "wb") as f:
                 f.write(content)
             saved_files.append({
-                "filename": upload_file.filename,
+                "filename": filename,
                 "temp_path": file_path,
             })
     except Exception as e:
