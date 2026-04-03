@@ -395,9 +395,20 @@ export function SyncView({
                 onClick={() => toggleSection("other")}
                 className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 transition-colors"
               >
-                <span className="font-medium text-gray-800">
-                  {otherUpdates.length} Other Updates
-                </span>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    checked={applyUpdates}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      setApplyUpdates(e.target.checked);
+                    }}
+                    className="w-4 h-4 text-gray-600"
+                  />
+                  <span className="font-medium text-gray-800">
+                    {otherUpdates.length} Other Updates
+                  </span>
+                </div>
                 <svg
                   className={`w-5 h-5 text-gray-600 transition-transform ${
                     expandedSection === "other" ? "rotate-180" : ""
