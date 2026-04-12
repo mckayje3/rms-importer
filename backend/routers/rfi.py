@@ -8,8 +8,8 @@ from typing import Optional
 
 from services.rfi_parser import RFIParser
 from services.procore_api import ProcoreAPI, RateLimitError
-from models.rfi import RMSRFI, RFIParseResult, RFICreateAction, RFISyncPlan
-from database import session_store, file_job_store
+from models.rfi import RFIParseResult, RFICreateAction, RFISyncPlan
+from routers.auth import get_token
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -140,7 +140,7 @@ async def get_rfi_items(session_id: str) -> list[dict]:
 async def analyze_rfis(
     project_id: int,
     request: RFIAnalyzeRequest,
-    x_auth_session: str = Header(None),
+    x_auth_session: str = Header(..., alias="X-Auth-Session"),
 ):
     """Compare parsed RFIs against existing Procore RFIs."""
     if request.session_id not in _rfi_sessions:
@@ -148,11 +148,11 @@ async def analyze_rfis(
 
     parse_result = _rfi_sessions[request.session_id]
 
-    # Get auth token
-    token_data = await session_store.get_session(x_auth_session)
-    if not token_data:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    access_token = token_data.get("access_token")
+    # Get auth token (same pattern as sync router)
+    try:
+        access_token = get_token(x_auth_session)
+    except HTTPException:
+        raise HTTPException(status_code=401, detail="Invalid auth session")
 
     api = ProcoreAPI(access_token, company_id=request.company_id)
 
@@ -209,19 +209,18 @@ async def analyze_rfis(
 async def execute_rfi_import(
     project_id: int,
     request: RFIExecuteRequest,
-    x_auth_session: str = Header(None),
+    x_auth_session: str = Header(..., alias="X-Auth-Session"),
 ):
     """Execute RFI import as a background job."""
     if request.session_id not in _rfi_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Get auth token
-    token_data = await session_store.get_session(x_auth_session)
-    if not token_data:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    access_token = token_data.get("access_token")
+    # Validate auth (same pattern as sync router)
+    try:
+        access_token = get_token(x_auth_session)
+    except HTTPException:
+        raise HTTPException(status_code=401, detail="Invalid auth session")
 
-    # Run analysis to get the plan
     parse_result = _rfi_sessions[request.session_id]
     api = ProcoreAPI(access_token, company_id=request.company_id)
 

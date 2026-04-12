@@ -347,13 +347,18 @@ export default function Home() {
     setRfiSession(session);
     if (!project || !company) return;
 
+    // Show loading state while analyzing
+    setRfiAnalysis(null);
+    setStep("rfi-review");
+
     try {
-      setStep("rfi-review");
       const analysis = await rfiApi.analyze(project.id, session.session_id, company.id);
       setRfiAnalysis(analysis);
     } catch (err) {
-      setError("Failed to analyze RFIs");
+      setError(err instanceof Error ? err.message : "Failed to analyze RFIs");
       console.error(err);
+      // Reset back to upload so user isn't stuck on spinner
+      setStep("rfi-upload");
     }
   };
 
