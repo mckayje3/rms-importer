@@ -299,11 +299,10 @@ async def _process_rfi_job(
             if rfi.date_requested:
                 rfi_data["due_date"] = rfi.date_requested.isoformat()
 
-            # Set status based on whether answered
-            if rfi.is_answered:
-                rfi_data["status"] = "closed"
-            else:
-                rfi_data["status"] = "open"
+            # Create as Draft first (fewest required fields).
+            # Status will be adjusted once we confirm Procore's
+            # accepted values and required fields for Open/Closed.
+            rfi_data["status"] = "draft"
 
             # Create the RFI
             created = await api.create_rfi(project_id, rfi_data)

@@ -671,7 +671,13 @@ export default function Home() {
             <p className="text-gray-600 mb-6">
               Upload the &quot;All Requests for Information&quot; CSV report from RMS.
             </p>
-            <RFIUpload onUploadComplete={handleRfiUpload} />
+            <RFIUpload
+              onUploadComplete={handleRfiUpload}
+              onBack={() => {
+                setSelectedTool(null);
+                setStep("select-tool");
+              }}
+            />
           </div>
         );
 

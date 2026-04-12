@@ -6,11 +6,13 @@ import type { RFISession } from "@/types";
 
 interface RFIUploadProps {
   onUploadComplete: (session: RFISession) => void;
+  onBack: () => void;
 }
 
-export function RFIUpload({ onUploadComplete }: RFIUploadProps) {
+export function RFIUpload({ onUploadComplete, onBack }: RFIUploadProps) {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [parseResult, setParseResult] = useState<RFISession | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -19,6 +21,7 @@ export function RFIUpload({ onUploadComplete }: RFIUploadProps) {
     if (selected) {
       setFile(selected);
       setError(null);
+      setParseResult(null);
     }
   };
 
@@ -36,7 +39,7 @@ export function RFIUpload({ onUploadComplete }: RFIUploadProps) {
         return;
       }
 
-      onUploadComplete(session);
+      setParseResult(session);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
@@ -93,20 +96,62 @@ export function RFIUpload({ onUploadComplete }: RFIUploadProps) {
         </div>
       )}
 
-      <button
-        onClick={handleUpload}
-        disabled={!file || uploading}
-        className="w-full py-3 px-4 rounded-lg font-medium bg-orange-500 text-white hover:bg-orange-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-      >
-        {uploading ? (
-          <>
-            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-            Parsing RFIs...
-          </>
+      {/* Parse summary */}
+      {parseResult && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-2">
+          <p className="text-sm font-medium text-green-800">
+            Parsed {parseResult.total_count} RFIs
+          </p>
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-gray-600">Answered</span>
+              <span className="font-medium text-green-700">{parseResult.answered_count}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-600">Outstanding</span>
+              <span className="font-medium text-yellow-700">{parseResult.outstanding_count}</span>
+            </div>
+          </div>
+          {parseResult.warnings.length > 0 && (
+            <div className="text-xs text-yellow-700 mt-2">
+              {parseResult.warnings.map((w, i) => <p key={i}>{w}</p>)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="flex gap-4">
+        <button
+          onClick={onBack}
+          className="flex-1 py-3 px-4 rounded-lg font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
+        >
+          Back
+        </button>
+        {!parseResult ? (
+          <button
+            onClick={handleUpload}
+            disabled={!file || uploading}
+            className="flex-1 py-3 px-4 rounded-lg font-medium bg-orange-500 text-white hover:bg-orange-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {uploading ? (
+              <>
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                Parsing RFIs...
+              </>
+            ) : (
+              "Upload & Parse"
+            )}
+          </button>
         ) : (
-          "Upload & Parse"
+          <button
+            onClick={() => onUploadComplete(parseResult)}
+            className="flex-1 py-3 px-4 rounded-lg font-medium bg-orange-500 text-white hover:bg-orange-600 transition-colors"
+          >
+            Continue
+          </button>
         )}
-      </button>
+      </div>
     </div>
   );
 }

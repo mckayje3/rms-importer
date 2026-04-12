@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { rfi as rfiApi } from "@/lib/api";
 import type { RFISyncPlan, RFIJobStatus } from "@/types";
 
@@ -30,6 +30,9 @@ export function RFIReview({
   const [jobStatus, setJobStatus] = useState<RFIJobStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Stable ref for onComplete to avoid useEffect re-fires
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   // Poll job status
   useEffect(() => {
@@ -42,7 +45,7 @@ export function RFIReview({
 
         if (status.status === "completed" || status.status === "failed") {
           if (pollRef.current) clearInterval(pollRef.current);
-          onComplete({
+          onCompleteRef.current({
             created: status.created,
             replies: status.replies_added,
             errors: status.errors,
@@ -59,7 +62,7 @@ export function RFIReview({
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [jobId, onComplete]);
+  }, [jobId]);
 
   const handleExecute = async () => {
     setExecuting(true);
@@ -162,6 +165,14 @@ export function RFIReview({
         <p className="text-sm text-gray-500">
           {plan.already_exist} RFI(s) already exist in Procore and will be skipped.
         </p>
+      )}
+
+      {/* No changes */}
+      {!plan.has_changes && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
+          <p className="text-sm text-blue-700 font-medium">All RFIs are already in Procore.</p>
+          <p className="text-xs text-blue-600 mt-1">Nothing to import.</p>
+        </div>
       )}
 
       {/* Options */}
