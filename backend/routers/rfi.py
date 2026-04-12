@@ -378,12 +378,24 @@ async def debug_rfis(
     except Exception as e:
         result["existing_rfi_sample"] = f"Error: {e}"
 
-    # 2. Try creating a minimal test Draft RFI
+    # 2. Try creating a test Draft RFI with correct field structure
+    #    Based on existing RFI inspection: questions[] array, rfi_manager_id required
     import httpx
+
+    # Use the rfi_manager from the existing RFI sample if available
+    rfi_manager_id = None
+    if isinstance(result["existing_rfi_sample"], dict):
+        mgr = result["existing_rfi_sample"].get("rfi_manager")
+        if mgr:
+            rfi_manager_id = mgr.get("id")
+
     test_rfi = {
         "rfi": {
             "subject": "API TEST - DELETE ME",
             "status": "draft",
+            "rfi_manager_id": rfi_manager_id,
+            "assignee_ids": [rfi_manager_id] if rfi_manager_id else [],
+            "questions": [{"body": "This is a test RFI created by the API. Please delete."}],
         }
     }
     try:
@@ -400,12 +412,11 @@ async def debug_rfis(
                 "body": resp.json() if resp.status_code < 500 else resp.text,
                 "request_body": test_rfi,
             }
-            # If it succeeded, delete it
             if resp.status_code in (200, 201):
                 created_id = resp.json().get("id")
                 if created_id:
                     result["create_attempt"]["created_id"] = created_id
-                    result["create_attempt"]["note"] = "Test RFI created — leaving it for inspection. Delete manually."
+                    result["create_attempt"]["note"] = "Test RFI created — delete manually in Procore."
     except Exception as e:
         result["create_attempt"] = {"error": str(e), "request_body": test_rfi}
 
