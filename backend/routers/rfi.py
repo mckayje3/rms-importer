@@ -348,6 +348,70 @@ async def get_rfi_job_status(job_id: str):
     return RFIJobStatus(**_rfi_jobs[job_id])
 
 
+@router.get("/projects/{project_id}/debug")
+async def debug_rfis(
+    project_id: int,
+    company_id: int,
+    x_auth_session: str = Header(..., alias="X-Auth-Session"),
+):
+    """
+    Debug endpoint: fetch one existing RFI raw from Procore,
+    then attempt to create a test Draft RFI and capture the
+    full error response. Deletes the test RFI if created.
+    """
+    try:
+        access_token = get_token(x_auth_session)
+    except HTTPException:
+        raise HTTPException(status_code=401, detail="Invalid auth session")
+
+    api = ProcoreAPI(access_token, company_id=company_id)
+    result = {"existing_rfi_sample": None, "create_attempt": None}
+
+    # 1. Fetch one existing RFI raw
+    try:
+        raw = await api._get(
+            f"/rest/v1.0/projects/{project_id}/rfis",
+            params={"per_page": 1},
+        )
+        if raw:
+            result["existing_rfi_sample"] = raw[0]
+    except Exception as e:
+        result["existing_rfi_sample"] = f"Error: {e}"
+
+    # 2. Try creating a minimal test Draft RFI
+    import httpx
+    test_rfi = {
+        "rfi": {
+            "subject": "API TEST - DELETE ME",
+            "status": "draft",
+        }
+    }
+    try:
+        url = f"{api.base_url}/rest/v1.0/projects/{project_id}/rfis"
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                url,
+                headers={**api._headers(), "Content-Type": "application/json"},
+                json=test_rfi,
+                timeout=30.0,
+            )
+            result["create_attempt"] = {
+                "status_code": resp.status_code,
+                "body": resp.json() if resp.status_code < 500 else resp.text,
+                "request_body": test_rfi,
+            }
+            # If it succeeded, delete it
+            if resp.status_code in (200, 201):
+                created_id = resp.json().get("id")
+                if created_id:
+                    result["create_attempt"]["created_id"] = created_id
+                    result["create_attempt"]["note"] = "Test RFI created — leaving it for inspection. Delete manually."
+    except Exception as e:
+        result["create_attempt"] = {"error": str(e), "request_body": test_rfi}
+
+    return result
+
+
 @router.delete("/session/{session_id}")
 async def delete_session(session_id: str):
     """Delete an RFI session."""
