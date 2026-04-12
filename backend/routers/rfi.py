@@ -378,47 +378,64 @@ async def debug_rfis(
     except Exception as e:
         result["existing_rfi_sample"] = f"Error: {e}"
 
-    # 2. Try creating a test Draft RFI with correct field structure
-    #    Based on existing RFI inspection: questions[] array, rfi_manager_id required
+    # 2. Try multiple create variants to find what works
     import httpx
 
-    # Use the rfi_manager from the existing RFI sample if available
     rfi_manager_id = None
     if isinstance(result["existing_rfi_sample"], dict):
         mgr = result["existing_rfi_sample"].get("rfi_manager")
         if mgr:
             rfi_manager_id = mgr.get("id")
 
-    test_rfi = {
-        "rfi": {
-            "subject": "API TEST - DELETE ME",
-            "status": "draft",
-            "rfi_manager_id": rfi_manager_id,
-            "assignee_ids": [rfi_manager_id] if rfi_manager_id else [],
-            "questions": [{"body": "This is a test RFI created by the API. Please delete."}],
-        }
+    # Try several variants
+    variants = {
+        "v1.1_minimal": {
+            "url": f"{api.base_url}/rest/v1.1/projects/{project_id}/rfis",
+            "body": {"rfi": {"subject": "API TEST - DELETE ME", "rfi_manager_id": rfi_manager_id}},
+        },
+        "v1.0_no_questions": {
+            "url": f"{api.base_url}/rest/v1.0/projects/{project_id}/rfis",
+            "body": {"rfi": {"subject": "API TEST - DELETE ME", "rfi_manager_id": rfi_manager_id, "assignee_ids": [rfi_manager_id]}},
+        },
+        "v1.0_with_number": {
+            "url": f"{api.base_url}/rest/v1.0/projects/{project_id}/rfis",
+            "body": {"rfi": {"subject": "API TEST - DELETE ME", "number": "999", "rfi_manager_id": rfi_manager_id, "assignee_ids": [rfi_manager_id]}},
+        },
+        "v1.0_question_body": {
+            "url": f"{api.base_url}/rest/v1.0/projects/{project_id}/rfis",
+            "body": {"rfi": {"subject": "API TEST - DELETE ME", "number": "998", "rfi_manager_id": rfi_manager_id, "assignee_ids": [rfi_manager_id], "question": {"body": "Test question"}}},
+        },
     }
-    try:
-        url = f"{api.base_url}/rest/v1.0/projects/{project_id}/rfis"
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                url,
-                headers={**api._headers(), "Content-Type": "application/json"},
-                json=test_rfi,
-                timeout=30.0,
-            )
-            result["create_attempt"] = {
-                "status_code": resp.status_code,
-                "body": resp.json() if resp.status_code < 500 else resp.text,
-                "request_body": test_rfi,
-            }
-            if resp.status_code in (200, 201):
-                created_id = resp.json().get("id")
-                if created_id:
-                    result["create_attempt"]["created_id"] = created_id
-                    result["create_attempt"]["note"] = "Test RFI created — delete manually in Procore."
-    except Exception as e:
-        result["create_attempt"] = {"error": str(e), "request_body": test_rfi}
+
+    result["create_attempts"] = {}
+    for name, variant in variants.items():
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    variant["url"],
+                    headers={**api._headers(), "Content-Type": "application/json"},
+                    json=variant["body"],
+                    timeout=30.0,
+                )
+                attempt = {
+                    "status_code": resp.status_code,
+                    "request_body": variant["body"],
+                }
+                if resp.status_code < 500:
+                    attempt["response"] = resp.json()
+                else:
+                    attempt["response"] = resp.text
+                if resp.status_code in (200, 201):
+                    attempt["SUCCESS"] = True
+                    created_id = resp.json().get("id")
+                    if created_id:
+                        attempt["created_id"] = created_id
+                result["create_attempts"][name] = attempt
+        except Exception as e:
+            result["create_attempts"][name] = {"error": str(e), "request_body": variant["body"]}
+        # Small delay between attempts
+        import asyncio
+        await asyncio.sleep(1)
 
     return result
 
