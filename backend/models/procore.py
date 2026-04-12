@@ -128,3 +128,15 @@ class ProcoreLocation(BaseModel):
     id: int
     name: str
     parent_id: Optional[int] = None
+
+
+class ProcoreRFI(BaseModel):
+    """Procore RFI."""
+
+    id: int
+    number: Optional[int] = None
+    subject: str
+    status: Optional[str] = None  # "draft", "open", "closed"
+    due_date: Optional[str] = None
+    created_at: Optional[datetime] = None
+    question_body: Optional[str] = None

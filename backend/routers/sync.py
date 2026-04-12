@@ -233,16 +233,19 @@ async def execute_sync(
     # Generate the plan to count total operations
     sync_service = SyncService(str(project_id), str(company_id), config=_config_data)
 
-    plan = sync_service.analyze(rms_data)
+    plan = sync_service.analyze(
+        rms_data,
+        repair_custom_fields=request.repair_custom_fields,
+    )
 
-    # Count total operations for progress tracking
+    # Count total operations for progress tracking.
+    # File uploads are handled separately by the FolderFileUpload widget /
+    # process_file_job — they are not part of this background sync job.
     total_ops = 0
     if request.apply_creates:
         total_ops += len(plan.creates)
     if request.apply_updates:
         total_ops += len(plan.updates)
-    if request.apply_file_uploads:
-        total_ops += len(plan.file_uploads)
 
     if total_ops == 0:
         # Nothing to do — return immediately
@@ -280,7 +283,7 @@ async def execute_sync(
         apply_creates=request.apply_creates,
         apply_updates=request.apply_updates,
         apply_date_updates=request.apply_date_updates,
-        apply_file_uploads=request.apply_file_uploads,
+        repair_custom_fields=request.repair_custom_fields,
     ))
 
     logger.info(

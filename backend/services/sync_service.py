@@ -60,6 +60,7 @@ class SyncService:
         self,
         rms_data: RMSParseResult,
         new_files: list[str] = None,
+        repair_custom_fields: bool = False,
     ) -> SyncPlan:
         """
         Analyze RMS data against baseline and generate sync plan.
@@ -75,7 +76,10 @@ class SyncService:
         else:
             # Has baseline - incremental sync
             baseline_data = self._parse_baseline_data(baseline["data"])
-            return self._plan_incremental_sync(rms_data, baseline_data, new_files or [])
+            return self._plan_incremental_sync(
+                rms_data, baseline_data, new_files or [],
+                repair_custom_fields=repair_custom_fields,
+            )
 
     def _plan_full_migration(
         self,
@@ -96,6 +100,7 @@ class SyncService:
             info_key = f"{submittal.section}|{submittal.item_no}"
             qa_code = qa_lookup.get(key, submittal.qa_code)
             status = map_status_for_config(qa_code, submittal.status, self.config)
+            dates = date_lookup.get(key)
 
             plan.creates.append(CreateAction(
                 key=key,
@@ -107,7 +112,10 @@ class SyncService:
                 paragraph=submittal.paragraph,
                 info=info_lookup.get(info_key),
                 qa_code=qa_code,
+                qc_code=submittal.qc_code,
                 status=status,
+                government_received=dates.government_received.isoformat() if dates and dates.government_received else None,
+                government_returned=dates.government_returned.isoformat() if dates and dates.government_returned else None,
             ))
 
         # Add revisions from Transmittal Report
@@ -130,6 +138,7 @@ class SyncService:
                     info_key = f"{entry.section}|{entry.item_no}"
                     rev_qa = qa_lookup.get(key)
                     rev_status = map_status_for_config(rev_qa, None, self.config)
+                    dates = date_lookup.get(key)
                     plan.creates.append(CreateAction(
                         key=key,
                         section=entry.section,
@@ -137,10 +146,13 @@ class SyncService:
                         revision=entry.revision,
                         title=orig.description,
                         type=orig.procore_type,
-                        paragraph=None,
+                        paragraph=orig.paragraph,
                         info=info_lookup.get(info_key),
                         qa_code=rev_qa,
+                        qc_code=orig.qc_code,
                         status=rev_status,
+                        government_received=dates.government_received.isoformat() if dates and dates.government_received else None,
+                        government_returned=dates.government_returned.isoformat() if dates and dates.government_returned else None,
                     ))
 
         # All files need to be uploaded
@@ -158,6 +170,7 @@ class SyncService:
         rms_data: RMSParseResult,
         baseline: BaselineData,
         new_files: list[str],
+        repair_custom_fields: bool = False,
     ) -> SyncPlan:
         """Create a plan for incremental sync (baseline exists)."""
         plan = SyncPlan(mode=SyncMode.INCREMENTAL)
@@ -185,7 +198,10 @@ class SyncService:
                 paragraph=sub.paragraph,
                 info=sub.info,
                 qa_code=sub.qa_code,
+                qc_code=sub.qc_code,
                 status=sub.status,
+                government_received=sub.government_received,
+                government_returned=sub.government_returned,
             ))
 
         # Existing submittals - check for changes or missing Procore IDs
@@ -205,7 +221,10 @@ class SyncService:
                     paragraph=new.paragraph,
                     info=new.info,
                     qa_code=new.qa_code,
+                    qc_code=new.qc_code,
                     status=new.status,
+                    government_received=new.government_received,
+                    government_returned=new.government_returned,
                 ))
                 continue
 
@@ -216,6 +235,16 @@ class SyncService:
                     procore_id=old.procore_id,
                     changes=changes,
                 ))
+            elif repair_custom_fields:
+                # No diff detected, but re-send all custom field values to fix
+                # submittals where Procore has nulls despite baseline being correct
+                repair_changes = self._build_repair_changes(new)
+                if repair_changes:
+                    plan.updates.append(UpdateAction(
+                        key=key,
+                        procore_id=old.procore_id,
+                        changes=repair_changes,
+                    ))
 
         # Deleted submittals (in baseline but not new) - flag for review
         for key in baseline_keys - new_keys:
@@ -281,6 +310,23 @@ class SyncService:
         if isinstance(val, date):
             return val.isoformat()
         return str(val).strip() if str(val).strip() else None
+
+    def _build_repair_changes(self, sub: StoredSubmittal) -> list[FieldChange]:
+        """Build field changes that re-send all non-null custom field values."""
+        REPAIR_FIELDS = [
+            "paragraph", "qa_code", "qc_code", "info",
+            "government_received", "government_returned",
+        ]
+        changes = []
+        for field in REPAIR_FIELDS:
+            val = getattr(sub, field, None)
+            if val is not None:
+                changes.append(FieldChange(
+                    field=field,
+                    old_value=None,  # We don't know Procore's actual value
+                    new_value=val,
+                ))
+        return changes
 
     def _build_info_lookup(self, rms_data: RMSParseResult) -> dict[str, str]:
         """Build lookup for Info field from submittals."""
@@ -364,9 +410,9 @@ class SyncService:
                         revision=entry.revision,
                         title=orig.description,
                         type=orig.procore_type,
-                        paragraph=None,
+                        paragraph=orig.paragraph,
                         qa_code=rev_qa,
-                        qc_code=None,
+                        qc_code=orig.qc_code,
                         info=info_lookup.get(info_key),
                         status=map_status_for_config(rev_qa, None, self.config),
                         government_received=dates.government_received.isoformat() if dates and dates.government_received else None,

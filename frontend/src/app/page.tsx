@@ -9,12 +9,16 @@ import {
   AnalysisView,
   SyncView,
   ProjectSetup,
+  ToolSelector,
+  RFIUpload,
+  RFIReview,
 } from "@/components";
 import { FileJobProgress } from "@/components/FileJobProgress";
-import { auth, projects as projectsApi, submittals, sync, setup, health } from "@/lib/api";
+import { auth, projects as projectsApi, submittals, sync, setup, health, rfi as rfiApi } from "@/lib/api";
 import { useEmbeddedContext } from "@/lib/useEmbeddedContext";
 import type {
   AppStep,
+  ToolType,
   ProcoreCompany,
   ProcoreProject,
   ProcoreStats,
@@ -24,6 +28,9 @@ import type {
   SyncAnalysisResponse,
   SyncExecuteResponse,
   ProjectConfigData,
+  FileJobStatus,
+  RFISession,
+  RFIAnalyzeResponse,
 } from "@/types";
 
 export default function Home() {
@@ -44,9 +51,15 @@ export default function Home() {
   } | null>(null);
   const [syncAnalysis, setSyncAnalysis] = useState<SyncAnalysisResponse | null>(null);
   const [syncResult, setSyncResult] = useState<SyncExecuteResponse | null>(null);
+  const [fileJobId, setFileJobId] = useState<string | null>(null);
+  const [recentJobs, setRecentJobs] = useState<FileJobStatus[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [autoSelectingProject, setAutoSelectingProject] = useState(false);
   const [projectConfig, setProjectConfig] = useState<ProjectConfigData | null>(null);
+  const [selectedTool, setSelectedTool] = useState<ToolType | null>(null);
+  const [rfiSession, setRfiSession] = useState<RFISession | null>(null);
+  const [rfiAnalysis, setRfiAnalysis] = useState<RFIAnalyzeResponse | null>(null);
+  const [rfiResult, setRfiResult] = useState<{ created: number; replies: number; errors: string[] } | null>(null);
 
   // Check authentication on mount
   useEffect(() => {
@@ -174,7 +187,7 @@ export default function Home() {
   // Check for in-progress sync jobs when entering a project
   useEffect(() => {
     if (!project || !isAuthenticated) return;
-    if (step !== "upload-rms" && step !== "project-setup") return;
+    if (step !== "upload-rms" && step !== "project-setup" && step !== "select-tool") return;
 
     async function checkActiveJobs() {
       try {
@@ -201,6 +214,43 @@ export default function Home() {
     }
     checkActiveJobs();
   }, [project, isAuthenticated, step]);
+
+  // On the complete page, fetch recent jobs so the user can see file uploads
+  // and other background work that may have run independently of the current
+  // sync result. Also recovers a stray active file job into fileJobId if one
+  // exists and isn't already being shown by syncResult.update_job_id.
+  useEffect(() => {
+    if (step !== "complete" || !project || !isAuthenticated) return;
+
+    let cancelled = false;
+    async function loadRecentJobs() {
+      try {
+        const result = await sync.listJobs(project!.id, 5);
+        if (cancelled) return;
+        setRecentJobs(result.jobs);
+
+        // If there's an active job we're not already tracking, attach it to
+        // fileJobId so its progress shows on this screen.
+        const tracked = new Set<string>();
+        if (syncResult?.update_job_id) tracked.add(syncResult.update_job_id);
+        if (fileJobId) tracked.add(fileJobId);
+        const orphanActive = result.jobs.find(
+          (j) =>
+            (j.status === "queued" || j.status === "running") &&
+            !tracked.has(j.id)
+        );
+        if (orphanActive) {
+          setFileJobId(orphanActive.id);
+        }
+      } catch {
+        // Ignore — not critical
+      }
+    }
+    loadRecentJobs();
+    return () => {
+      cancelled = true;
+    };
+  }, [step, project, isAuthenticated, syncResult?.update_job_id, fileJobId]);
 
   const handleLogin = async () => {
     try {
@@ -281,7 +331,30 @@ export default function Home() {
 
   const handleSetupComplete = (config: ProjectConfigData) => {
     setProjectConfig(config);
-    setStep("upload-rms");
+    setStep("select-tool");
+  };
+
+  const handleToolSelect = (tool: ToolType) => {
+    setSelectedTool(tool);
+    if (tool === "submittals") {
+      setStep("upload-rms");
+    } else if (tool === "rfis") {
+      setStep("rfi-upload");
+    }
+  };
+
+  const handleRfiUpload = async (session: RFISession) => {
+    setRfiSession(session);
+    if (!project || !company) return;
+
+    try {
+      setStep("rfi-review");
+      const analysis = await rfiApi.analyze(project.id, session.session_id, company.id);
+      setRfiAnalysis(analysis);
+    } catch (err) {
+      setError("Failed to analyze RFIs");
+      console.error(err);
+    }
   };
 
   const handleRmsUpload = async (session: RMSSession) => {
@@ -314,7 +387,6 @@ export default function Home() {
     creates: boolean;
     updates: boolean;
     dates: boolean;
-    files: boolean;
   }) => {
     if (!project || !company || !rmsSession) return;
 
@@ -413,6 +485,19 @@ export default function Home() {
           </div>
         );
 
+      case "select-tool":
+        return (
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">
+              Select Tool
+            </h2>
+            <p className="text-gray-600 mb-6">
+              Choose which RMS data you want to import into Procore.
+            </p>
+            <ToolSelector onSelect={handleToolSelect} />
+          </div>
+        );
+
       case "upload-rms":
         return (
           <div>
@@ -502,6 +587,8 @@ export default function Home() {
               projectId={project?.id}
               rmsSessionId={rmsSession?.session_id}
               companyId={company?.id}
+              fileJobId={fileJobId}
+              onFileJobIdChange={setFileJobId}
             />
           </div>
         );
@@ -570,6 +657,53 @@ export default function Home() {
           </div>
         );
 
+      case "rfi-upload":
+        return (
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">
+              Upload RFI Report
+            </h2>
+            <p className="text-gray-600 mb-6">
+              Upload the &quot;All Requests for Information&quot; CSV report from RMS.
+            </p>
+            <RFIUpload onUploadComplete={handleRfiUpload} />
+          </div>
+        );
+
+      case "rfi-review":
+        if (!rfiAnalysis || !rfiSession) {
+          return (
+            <div className="flex items-center justify-center py-12">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto mb-4"></div>
+                <p className="text-gray-600">Analyzing RFIs...</p>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">
+              RFI Import Review
+            </h2>
+            <p className="text-gray-600 mb-6">
+              Review RFIs to be imported into Procore.
+            </p>
+            <RFIReview
+              plan={rfiAnalysis.plan}
+              summary={rfiAnalysis.summary}
+              projectId={project!.id}
+              sessionId={rfiSession.session_id}
+              companyId={company!.id}
+              onComplete={(result) => {
+                setRfiResult(result);
+                setStep("complete");
+              }}
+              onCancel={() => setStep("rfi-upload")}
+            />
+          </div>
+        );
+
       case "complete":
         return (
           <div className="text-center py-12">
@@ -594,10 +728,15 @@ export default function Home() {
             <p className="text-gray-600 mb-6">
               {syncResult?.update_job_id
                 ? "Your sync is running in the background. You can navigate away safely."
-                : "Your RMS data has been imported to Procore."}
+                : rfiResult
+                  ? "Your RFIs have been imported to Procore."
+                  : "Your RMS data has been imported to Procore."}
             </p>
 
-            {syncResult && (
+            {/* Static result panel — only shown for synchronous completions
+                (no background job). When update_job_id is set, FileJobProgress
+                below shows the live state instead. */}
+            {syncResult && !syncResult.update_job_id && (
               <div className="bg-gray-50 rounded-lg p-6 max-w-sm mx-auto mb-6">
                 <div className="space-y-3">
                   <div className="flex justify-between">
@@ -651,6 +790,9 @@ export default function Home() {
 
             {syncResult?.update_job_id && project && (
               <div className="max-w-md mx-auto mb-6">
+                <p className="text-sm font-medium text-gray-700 mb-2 text-left">
+                  Submittal sync
+                </p>
                 <FileJobProgress
                   projectId={project.id}
                   jobId={syncResult.update_job_id}
@@ -660,7 +802,87 @@ export default function Home() {
               </div>
             )}
 
-            {importResult && !syncResult && (
+            {fileJobId && project && fileJobId !== syncResult?.update_job_id && (
+              <div className="max-w-md mx-auto mb-6">
+                <p className="text-sm font-medium text-gray-700 mb-2 text-left">
+                  File upload
+                </p>
+                <FileJobProgress
+                  projectId={project.id}
+                  jobId={fileJobId}
+                  label="files"
+                  onComplete={() => {}}
+                />
+              </div>
+            )}
+
+            {recentJobs.length > 0 && (
+              <div className="max-w-md mx-auto mb-6 text-left">
+                <details className="bg-gray-50 rounded-lg p-4">
+                  <summary className="text-sm font-medium text-gray-700 cursor-pointer">
+                    Recent activity ({recentJobs.length})
+                  </summary>
+                  <ul className="mt-3 space-y-2 text-xs">
+                    {recentJobs.map((job) => {
+                      const summary = job.result_summary;
+                      const isFileJob = summary && summary.uploaded != null && summary.created == null;
+                      const label = isFileJob ? "File upload" : "Submittal sync";
+                      const detail = summary
+                        ? isFileJob
+                          ? `${summary.uploaded} / ${summary.total} files`
+                          : `${summary.created ?? 0} created, ${summary.updated ?? 0} updated${summary.files ? `, ${summary.files} files` : ""}`
+                        : `${job.uploaded_files} / ${job.total_files}`;
+                      const statusColor =
+                        job.status === "completed" ? "text-green-600"
+                        : job.status === "failed" ? "text-red-600"
+                        : job.status === "running" || job.status === "queued" ? "text-blue-600"
+                        : "text-gray-600";
+                      return (
+                        <li key={job.id} className="flex justify-between gap-2">
+                          <span className="text-gray-700">
+                            <span className="font-medium">{label}</span>
+                            <span className="text-gray-500"> — {detail}</span>
+                            {summary && summary.errors > 0 && (
+                              <span className="text-red-500"> ({summary.errors} errors)</span>
+                            )}
+                          </span>
+                          <span className={`font-medium ${statusColor}`}>{job.status}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </details>
+              </div>
+            )}
+
+            {rfiResult && (
+              <div className="bg-gray-50 rounded-lg p-6 max-w-sm mx-auto mb-6">
+                <div className="space-y-3">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">RFIs Created</span>
+                    <span className="font-medium text-green-600">{rfiResult.created}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Replies Added</span>
+                    <span className="font-medium text-blue-600">{rfiResult.replies}</span>
+                  </div>
+                  {rfiResult.errors.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-gray-200">
+                      <p className="text-sm font-medium text-red-600 mb-1">
+                        {rfiResult.errors.length} error(s)
+                      </p>
+                      <ul className="text-xs text-red-500 space-y-1">
+                        {rfiResult.errors.slice(0, 5).map((e, i) => (
+                          <li key={i}>{e}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {importResult && !syncResult && !rfiResult && (
               <div className="bg-gray-50 rounded-lg p-6 max-w-sm mx-auto mb-6">
                 <div className="space-y-3">
                   <div className="flex justify-between">
@@ -689,7 +911,7 @@ export default function Home() {
 
             <button
               onClick={() => {
-                setStep(embedded.isEmbedded ? "upload-rms" : "select-project");
+                setStep(embedded.isEmbedded ? "select-tool" : "select-project");
                 setRmsSession(null);
                 setAnalysis(null);
                 setSelectedMode(null);
@@ -697,10 +919,14 @@ export default function Home() {
                 setSyncAnalysis(null);
                 setSyncResult(null);
                 setProjectConfig(null);
+                setSelectedTool(null);
+                setRfiSession(null);
+                setRfiAnalysis(null);
+                setRfiResult(null);
               }}
               className="bg-orange-500 text-white px-8 py-3 rounded-lg font-medium hover:bg-orange-600 transition-colors"
             >
-              {embedded.isEmbedded ? "Sync Again" : "Import Another Project"}
+              {embedded.isEmbedded ? "Import More" : "Import Another Project"}
             </button>
           </div>
         );
@@ -719,7 +945,7 @@ export default function Home() {
       {isAuthenticated && step !== "auth" && step !== "complete" && (
         <div className="bg-white border-b border-gray-200">
           <div className="max-w-4xl mx-auto">
-            <StepIndicator currentStep={step} isEmbedded={embedded.isEmbedded} />
+            <StepIndicator currentStep={step} isEmbedded={embedded.isEmbedded} selectedTool={selectedTool} />
           </div>
         </div>
       )}

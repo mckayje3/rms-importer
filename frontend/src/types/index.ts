@@ -238,16 +238,83 @@ export interface FileUploadResult {
   unmapped_files?: number;
 }
 
+// Tool Selection
+export type ToolType = "submittals" | "rfis";
+
+// RFI Types
+export interface RMSRFI {
+  rfi_number: string;
+  number: number;
+  subject: string;
+  date_requested: string | null;
+  date_received: string | null;
+  date_answered: string | null;
+  requester_name: string | null;
+  responder_name: string | null;
+  is_answered: boolean;
+  question_preview: string;
+  has_response: boolean;
+}
+
+export interface RFISession {
+  session_id: string;
+  total_count: number;
+  answered_count: number;
+  outstanding_count: number;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface RFICreateAction {
+  rfi_number: string;
+  number: number;
+  subject: string;
+  is_answered: boolean;
+}
+
+export interface RFISyncPlan {
+  creates: RFICreateAction[];
+  already_exist: number;
+  total_rms: number;
+  has_changes: boolean;
+  summary: string;
+}
+
+export interface RFIAnalyzeResponse {
+  plan: RFISyncPlan;
+  summary: string;
+}
+
+export interface RFIExecuteResponse {
+  status: string;
+  created: number;
+  replies_added: number;
+  errors: string[];
+  job_id: string | null;
+}
+
+export interface RFIJobStatus {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  total: number;
+  created: number;
+  replies_added: number;
+  errors: string[];
+}
+
 // App State
 export type AppStep =
   | "auth"
   | "select-project"
   | "project-setup"
+  | "select-tool"
   | "upload-rms"
   | "analyze"
   | "sync-review"
   | "review"
   | "import"
+  | "rfi-upload"
+  | "rfi-review"
   | "complete";
 
 export interface AppState {

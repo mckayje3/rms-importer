@@ -33,12 +33,14 @@ async def process_sync_job(
     apply_creates: bool = True,
     apply_updates: bool = True,
     apply_date_updates: bool = True,
-    apply_file_uploads: bool = True,
+    repair_custom_fields: bool = False,
 ) -> None:
     """
-    Process the entire sync (creates + updates + files) in the background.
+    Process submittal creates and updates in the background.
 
-    Progress is tracked via file_job_store — the frontend polls for updates.
+    File uploads are handled separately by process_file_job (kicked off from
+    the FolderFileUpload widget). Progress is tracked via file_job_store —
+    the frontend polls for updates.
     """
     from models.mappings import get_status_id
     from services.sync_service import SyncService
@@ -59,18 +61,22 @@ async def process_sync_job(
 
         # Rebuild the plan
         sync_service = SyncService(str(project_id), str(company_id), config=config_data)
-        plan = sync_service.analyze(rms_data)
+        plan = sync_service.analyze(rms_data, repair_custom_fields=repair_custom_fields)
 
         # Custom field IDs
         PARAGRAPH_FIELD = _get_custom_field(config_data, "paragraph", "custom_field_598134325870420")
         INFO_FIELD = _get_custom_field(config_data, "info", "custom_field_598134325871364")
         QA_CODE_FIELD = _get_custom_field(config_data, "qa_code", "custom_field_598134325871360")
         QC_CODE_FIELD = _get_custom_field(config_data, "qc_code", "custom_field_598134325871359")
+        GOV_RECEIVED_FIELD = _get_custom_field(config_data, "government_received", "custom_field_598134325872868")
+        GOV_RETURNED_FIELD = _get_custom_field(config_data, "government_returned", "custom_field_598134325872869")
         CUSTOM_FIELD_MAP = {
             "info": INFO_FIELD,
             "paragraph": PARAGRAPH_FIELD,
             "qa_code": QA_CODE_FIELD,
             "qc_code": QC_CODE_FIELD,
+            "government_received": GOV_RECEIVED_FIELD,
+            "government_returned": GOV_RETURNED_FIELD,
         }
 
         # === CREATES ===
@@ -118,13 +124,19 @@ async def process_sync_job(
                         if status_id:
                             submittal_data["status_id"] = status_id
 
-                    custom_fields = {}
+                    # Custom fields are top-level on submittal (not nested under custom_fields)
                     if create.paragraph:
-                        custom_fields[PARAGRAPH_FIELD] = create.paragraph
+                        submittal_data[PARAGRAPH_FIELD] = create.paragraph
                     if create.info:
-                        custom_fields[INFO_FIELD] = create.info
-                    if custom_fields:
-                        submittal_data["custom_fields"] = custom_fields
+                        submittal_data[INFO_FIELD] = create.info
+                    if create.qa_code:
+                        submittal_data[QA_CODE_FIELD] = create.qa_code
+                    if create.qc_code:
+                        submittal_data[QC_CODE_FIELD] = create.qc_code
+                    if create.government_received:
+                        submittal_data[GOV_RECEIVED_FIELD] = create.government_received
+                    if create.government_returned:
+                        submittal_data[GOV_RETURNED_FIELD] = create.government_returned
 
                     result = await api.create_submittal(project_id, submittal_data)
                     if result and "id" in result:
@@ -178,7 +190,6 @@ async def process_sync_job(
 
                 try:
                     update_data = {}
-                    custom_fields = {}
 
                     for change in changes:
                         field = change.field
@@ -191,12 +202,10 @@ async def process_sync_job(
                             else:
                                 logger.warning(f"No status_id for '{value}' on {update.key}")
                         elif field in CUSTOM_FIELD_MAP:
-                            custom_fields[CUSTOM_FIELD_MAP[field]] = value
+                            # Custom fields are top-level on submittal object
+                            update_data[CUSTOM_FIELD_MAP[field]] = value
                         else:
                             update_data[field] = value
-
-                    if custom_fields:
-                        update_data["custom_fields"] = custom_fields
 
                     await api.update_submittal(project_id, update.procore_id, update_data)
                     updated_keys.append(update.key)
@@ -315,5 +324,4 @@ async def process_sync_updates(
         config_data=config_data,
         apply_creates=False,
         apply_updates=True,
-        apply_file_uploads=False,
     )

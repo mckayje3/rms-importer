@@ -57,7 +57,7 @@ interface BaselineInfo {
 interface SyncViewProps {
   baseline: BaselineInfo;
   plan: SyncPlan;
-  onExecute: (options: { creates: boolean; updates: boolean; dates: boolean; files: boolean }) => void;
+  onExecute: (options: { creates: boolean; updates: boolean; dates: boolean }) => void;
   onBootstrap?: () => Promise<void>;
   onCancel: () => void;
   onDone?: () => void;
@@ -65,6 +65,8 @@ interface SyncViewProps {
   projectId?: number;
   rmsSessionId?: string;
   companyId?: number;
+  fileJobId?: string | null;
+  onFileJobIdChange?: (jobId: string | null) => void;
 }
 
 // Field display names
@@ -90,14 +92,22 @@ export function SyncView({
   projectId,
   rmsSessionId,
   companyId,
+  fileJobId: externalFileJobId,
+  onFileJobIdChange,
 }: SyncViewProps) {
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
   const [applyCreates, setApplyCreates] = useState(true);
   const [applyUpdates, setApplyUpdates] = useState(true);
   const [applyDates, setApplyDates] = useState(true);
-  const [applyFiles, setApplyFiles] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(false);
-  const [fileJobId, setFileJobId] = useState<string | null>(null);
+  const [internalFileJobId, setInternalFileJobId] = useState<string | null>(null);
+  // Prefer external (parent-managed) state when provided so the file job
+  // survives navigation away from this screen.
+  const fileJobId = externalFileJobId !== undefined ? externalFileJobId : internalFileJobId;
+  const setFileJobId = (id: string | null) => {
+    setInternalFileJobId(id);
+    onFileJobIdChange?.(id);
+  };
 
   const toggleSection = (section: string) => {
     setExpandedSection(expandedSection === section ? null : section);
@@ -108,7 +118,6 @@ export function SyncView({
       creates: applyCreates,
       updates: applyUpdates,
       dates: applyDates,
-      files: applyFiles,
     });
   };
 
@@ -495,7 +504,7 @@ export function SyncView({
             </button>
             <button
               onClick={handleExecute}
-              disabled={isExecuting || (!applyCreates && !applyUpdates && !applyFiles)}
+              disabled={isExecuting || (!applyCreates && !applyUpdates)}
               className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {isExecuting ? (
@@ -564,7 +573,7 @@ export function SyncView({
                 projectId={projectId}
                 rmsSessionId={rmsSessionId}
                 companyId={companyId}
-                onUploadStarted={(jobId) => setFileJobId(jobId)}
+                onUploadStarted={setFileJobId}
               />
             ) : (
               <p className="text-sm text-gray-500">

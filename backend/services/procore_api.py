@@ -15,6 +15,7 @@ from models.procore import (
     ProcoreObservation,
     ProcoreObservationType,
     ProcoreLocation,
+    ProcoreRFI,
 )
 
 settings = get_settings()
@@ -668,4 +669,57 @@ class ProcoreAPI:
             location=data.get("location"),
             assignee=data.get("assignee"),
             observation_type=data.get("type"),
+        )
+
+    # === RFI Methods ===
+
+    async def get_rfis(self, project_id: int) -> list[ProcoreRFI]:
+        """Get all RFIs for a project."""
+        data = await self._get_paginated(
+            f"/rest/v1.0/projects/{project_id}/rfis"
+        )
+        return [self._parse_rfi(r) for r in data]
+
+    def _parse_rfi(self, data: dict) -> ProcoreRFI:
+        """Parse an RFI from API response."""
+        return ProcoreRFI(
+            id=data["id"],
+            number=data.get("number"),
+            subject=data.get("subject", ""),
+            status=data.get("status"),
+            due_date=data.get("due_date"),
+            created_at=data.get("created_at"),
+            question_body=data.get("question", {}).get("body") if isinstance(data.get("question"), dict) else None,
+        )
+
+    async def create_rfi(self, project_id: int, rfi_data: dict) -> dict:
+        """Create a new RFI.
+
+        Args:
+            project_id: Procore project ID
+            rfi_data: RFI fields including subject, question_body, number, etc.
+        """
+        return await self._post(
+            f"/rest/v1.0/projects/{project_id}/rfis",
+            {"rfi": rfi_data},
+        )
+
+    async def update_rfi(self, project_id: int, rfi_id: int, rfi_data: dict) -> dict:
+        """Update an existing RFI."""
+        return await self._patch(
+            f"/rest/v1.0/projects/{project_id}/rfis/{rfi_id}",
+            {"rfi": rfi_data},
+        )
+
+    async def create_rfi_reply(self, project_id: int, rfi_id: int, reply_data: dict) -> dict:
+        """Create a reply on an RFI (e.g., the government response).
+
+        Args:
+            project_id: Procore project ID
+            rfi_id: RFI ID
+            reply_data: Reply fields including body text
+        """
+        return await self._post(
+            f"/rest/v1.0/projects/{project_id}/rfis/{rfi_id}/replies",
+            {"reply": reply_data},
         )

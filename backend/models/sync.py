@@ -29,7 +29,10 @@ class CreateAction(BaseModel):
     paragraph: Optional[str] = None
     info: Optional[str] = None
     qa_code: Optional[str] = None
+    qc_code: Optional[str] = None
     status: Optional[str] = None  # Procore status name (e.g., "Closed", "Open")
+    government_received: Optional[str] = None
+    government_returned: Optional[str] = None
 
 
 class UpdateAction(BaseModel):
@@ -121,7 +124,7 @@ class SyncExecuteRequest(BaseModel):
     apply_creates: bool = True
     apply_updates: bool = True
     apply_date_updates: bool = True
-    apply_file_uploads: bool = True
+    repair_custom_fields: bool = False  # Re-send all custom field values even if baseline matches
 
 
 class SyncExecuteResponse(BaseModel):

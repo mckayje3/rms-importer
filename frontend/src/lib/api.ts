@@ -19,6 +19,11 @@ import type {
   FileFilterResponse,
   FileJobStatus,
   FileUploadResult,
+  RFISession,
+  RMSRFI,
+  RFIAnalyzeResponse,
+  RFIExecuteResponse,
+  RFIJobStatus,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -280,7 +285,7 @@ export const sync = {
     projectId: number,
     sessionId: string,
     companyId: number,
-    options: { creates: boolean; updates: boolean; dates: boolean; files: boolean }
+    options: { creates: boolean; updates: boolean; dates: boolean }
   ): Promise<SyncExecuteResponse> => {
     return fetchAPI(`/sync/projects/${projectId}/execute`, {
       method: "POST",
@@ -292,7 +297,6 @@ export const sync = {
         apply_creates: options.creates,
         apply_updates: options.updates,
         apply_date_updates: options.dates,
-        apply_file_uploads: options.files,
       }),
     });
   },
@@ -422,6 +426,73 @@ export const setup = {
     return fetchAPI(`/setup/projects/${projectId}/config`, {
       method: "DELETE",
     });
+  },
+};
+
+// RFI endpoints
+export const rfi = {
+  upload: async (file: File): Promise<RFISession> => {
+    const authSession = typeof window !== "undefined"
+      ? sessionStorage.getItem("auth_session")
+      : null;
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch(`${API_BASE}/rfi/upload`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        ...(authSession ? { "X-Auth-Session": authSession } : {}),
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new APIError(response.status, error);
+    }
+
+    return response.json();
+  },
+
+  listItems: async (sessionId: string): Promise<RMSRFI[]> => {
+    return fetchAPI(`/rfi/session/${sessionId}/items`);
+  },
+
+  analyze: async (
+    projectId: number,
+    sessionId: string,
+    companyId: number
+  ): Promise<RFIAnalyzeResponse> => {
+    return fetchAPI(`/rfi/projects/${projectId}/analyze`, {
+      method: "POST",
+      body: JSON.stringify({
+        session_id: sessionId,
+        company_id: companyId,
+      }),
+    });
+  },
+
+  execute: async (
+    projectId: number,
+    sessionId: string,
+    companyId: number,
+    options: { creates: boolean; replies: boolean }
+  ): Promise<RFIExecuteResponse> => {
+    return fetchAPI(`/rfi/projects/${projectId}/execute`, {
+      method: "POST",
+      body: JSON.stringify({
+        session_id: sessionId,
+        company_id: companyId,
+        apply_creates: options.creates,
+        apply_replies: options.replies,
+      }),
+    });
+  },
+
+  getJobStatus: async (jobId: string): Promise<RFIJobStatus> => {
+    return fetchAPI(`/rfi/jobs/${jobId}`);
   },
 };
 

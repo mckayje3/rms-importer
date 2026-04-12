@@ -1,29 +1,49 @@
 "use client";
 
-import type { AppStep } from "@/types";
+import type { AppStep, ToolType } from "@/types";
 
-const STEPS: { key: AppStep; label: string }[] = [
+const COMMON_STEPS: { key: AppStep; label: string }[] = [
   { key: "auth", label: "Connect" },
   { key: "select-project", label: "Select Project" },
   { key: "project-setup", label: "Setup" },
+  { key: "select-tool", label: "Select Tool" },
+];
+
+const SUBMITTAL_STEPS: { key: AppStep; label: string }[] = [
   { key: "upload-rms", label: "Upload RMS" },
   { key: "analyze", label: "Analyze" },
   { key: "review", label: "Review" },
   { key: "import", label: "Import" },
 ];
 
+const RFI_STEPS: { key: AppStep; label: string }[] = [
+  { key: "rfi-upload", label: "Upload RFIs" },
+  { key: "rfi-review", label: "Review" },
+];
+
 interface StepIndicatorProps {
   currentStep: AppStep;
   isEmbedded?: boolean;
+  selectedTool?: ToolType | null;
 }
 
-export function StepIndicator({ currentStep, isEmbedded = false }: StepIndicatorProps) {
-  // sync-review maps to the same position as review in the step bar
+export function StepIndicator({ currentStep, isEmbedded = false, selectedTool = null }: StepIndicatorProps) {
+  // Map sync-review to review for step bar
   const effectiveStep = currentStep === "sync-review" ? "review" : currentStep;
-  // When embedded, skip "Connect" and "Select Project" steps (handled automatically)
+
+  // Build step list based on selected tool
+  let toolSteps = SUBMITTAL_STEPS; // default
+  if (selectedTool === "rfis") {
+    toolSteps = RFI_STEPS;
+  }
+
+  const allSteps = [...COMMON_STEPS, ...toolSteps];
+
+  // When embedded, skip "Connect" and "Select Project" steps
   const visibleSteps = isEmbedded
-    ? STEPS.filter(s => s.key !== "auth" && s.key !== "select-project")
-    : STEPS;
+    ? allSteps.filter(s => s.key !== "auth" && s.key !== "select-project")
+    : allSteps;
+
   const currentIndex = visibleSteps.findIndex((s) => s.key === effectiveStep);
 
   return (
