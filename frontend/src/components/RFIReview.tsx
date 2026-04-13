@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { rfi as rfiApi } from "@/lib/api";
+import { RFIFileUpload } from "./RFIFileUpload";
 import type { RFISyncPlan, RFIJobStatus } from "@/types";
 
 interface RFIReviewProps {
@@ -234,6 +235,11 @@ export function RFIReview({
             )}
           </button>
         )}
+      </div>
+
+      {/* File Uploads — always available */}
+      <div className="pt-4 border-t border-gray-200">
+        <RFIFileUpload projectId={projectId} companyId={companyId} />
       </div>
     </div>
   );
