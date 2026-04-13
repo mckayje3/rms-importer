@@ -14,6 +14,7 @@ export function RMSUpload({ onUploadComplete, onBack }: RMSUploadProps) {
   const [registerReportFile, setRegisterReportFile] = useState<File | null>(null);
   const [reportFile, setReportFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [parseResult, setParseResult] = useState<RMSSession | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const canUpload = registerReportFile !== null;
@@ -29,7 +30,13 @@ export function RMSUpload({ onUploadComplete, onBack }: RMSUploadProps) {
         registerReportFile!,
         reportFile || undefined,
       );
-      onUploadComplete(session);
+
+      if (session.parse_result.errors.length > 0 && session.parse_result.submittal_count === 0) {
+        setError(`Parse failed: ${session.parse_result.errors.join("; ")}`);
+        return;
+      }
+
+      setParseResult(session);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
       console.error(err);
@@ -56,7 +63,7 @@ export function RMSUpload({ onUploadComplete, onBack }: RMSUploadProps) {
           description="All submittals with classifications, paragraph references, and status codes."
           accept=".csv"
           file={registerReportFile}
-          onFileSelect={setRegisterReportFile}
+          onFileSelect={(f) => { setRegisterReportFile(f); setParseResult(null); }}
         />
 
         <FileUpload
@@ -64,7 +71,7 @@ export function RMSUpload({ onUploadComplete, onBack }: RMSUploadProps) {
           description="Adds revisions, dates, and historical QA codes for all transmittals"
           accept=".csv"
           file={reportFile}
-          onFileSelect={setReportFile}
+          onFileSelect={(f) => { setReportFile(f); setParseResult(null); }}
         />
       </div>
 
@@ -74,6 +81,31 @@ export function RMSUpload({ onUploadComplete, onBack }: RMSUploadProps) {
         </div>
       )}
 
+      {/* Parse summary */}
+      {parseResult && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-2">
+          <p className="text-sm font-medium text-green-800">
+            Parsed {parseResult.parse_result.submittal_count} submittals
+          </p>
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-gray-600">Spec Sections</span>
+              <span className="font-medium text-green-700">{parseResult.parse_result.spec_section_count}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-600">Revisions</span>
+              <span className="font-medium text-green-700">{parseResult.parse_result.revision_count}</span>
+            </div>
+          </div>
+          {parseResult.parse_result.warnings.length > 0 && (
+            <div className="text-xs text-yellow-700 mt-2">
+              {parseResult.parse_result.warnings.map((w, i) => <p key={i}>{w}</p>)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Actions */}
       <div className="flex gap-4">
         {onBack && (
           <button
@@ -83,27 +115,36 @@ export function RMSUpload({ onUploadComplete, onBack }: RMSUploadProps) {
             Back
           </button>
         )}
-        <button
-          onClick={handleUpload}
-          disabled={!canUpload || uploading}
-          className={`
-            flex-1 py-3 px-4 rounded-lg font-medium transition-colors flex items-center justify-center gap-2
-            ${
-              canUpload && !uploading
-                ? "bg-orange-500 text-white hover:bg-orange-600"
-                : "bg-gray-200 text-gray-500 cursor-not-allowed"
-            }
-          `}
-        >
-          {uploading ? (
-            <>
-              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-              Uploading & Parsing...
-            </>
-          ) : (
-            "Upload & Parse Files"
-          )}
-        </button>
+        {!parseResult ? (
+          <button
+            onClick={handleUpload}
+            disabled={!canUpload || uploading}
+            className={`
+              flex-1 py-3 px-4 rounded-lg font-medium transition-colors flex items-center justify-center gap-2
+              ${
+                canUpload && !uploading
+                  ? "bg-orange-500 text-white hover:bg-orange-600"
+                  : "bg-gray-200 text-gray-500 cursor-not-allowed"
+              }
+            `}
+          >
+            {uploading ? (
+              <>
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                Uploading & Parsing...
+              </>
+            ) : (
+              "Upload & Parse Files"
+            )}
+          </button>
+        ) : (
+          <button
+            onClick={() => onUploadComplete(parseResult)}
+            className="flex-1 py-3 px-4 rounded-lg font-medium bg-orange-500 text-white hover:bg-orange-600 transition-colors"
+          >
+            Continue
+          </button>
+        )}
       </div>
     </div>
   );
