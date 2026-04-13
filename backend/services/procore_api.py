@@ -422,13 +422,16 @@ class ProcoreAPI:
                 },
             )
             doc_id = doc_response["id"]
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 400:
-                # Likely duplicate filename — find existing document
-                logger.warning(f"Document create returned 400 for '{filename}', searching for existing file")
+        except Exception as e:
+            # 400 = likely duplicate filename from a previous interrupted upload.
+            # Search the folder for the existing file and reuse its prostore_file_id.
+            error_str = str(e)
+            if "400" in error_str or "Bad Request" in error_str:
+                logger.warning(f"Document create failed for '{filename}': {error_str}. Searching for existing file...")
                 existing_id = await self._find_existing_document(project_id, filename, folder_id)
                 if existing_id:
                     return existing_id
+                logger.error(f"Could not find existing document '{filename}' in folder {folder_id}")
             raise
 
         # Step 4: Get prostore_file_id
@@ -454,15 +457,20 @@ class ProcoreAPI:
         filename: str,
         folder_id: int,
     ) -> Optional[int]:
-        """Find an existing document by filename and return its prostore_file_id."""
+        """Find an existing document by filename and return its prostore_file_id.
+
+        Searches recent documents across all folders (parent_id filter
+        doesn't work reliably with extended view). Matches by exact name.
+        """
         try:
+            # Search recent docs with extended view to get prostore_file info
             docs = await self._get(
                 f"/rest/v1.0/projects/{project_id}/documents",
                 params={
                     "view": "extended",
                     "filters[document_type]": "file",
-                    "filters[parent_id]": folder_id,
-                    "per_page": 300,
+                    "per_page": 100,
+                    "sort": "-updated_at",
                 },
             )
             for doc in docs:
@@ -471,6 +479,35 @@ class ProcoreAPI:
                     if prostore:
                         logger.info(f"Found existing document '{filename}' with prostore_file_id {prostore['id']}")
                         return prostore["id"]
+
+            # If not in recent 100, search the specific folder without extended view
+            # and then fetch the detail for the matching doc
+            folder_docs = await self._get(
+                f"/rest/v1.0/projects/{project_id}/documents",
+                params={
+                    "filters[document_type]": "file",
+                    "filters[parent_id]": folder_id,
+                    "per_page": 300,
+                },
+            )
+            for doc in folder_docs:
+                if doc.get("name") == filename:
+                    # Fetch with extended view to get prostore_file
+                    detail = await self._get(
+                        f"/rest/v1.0/projects/{project_id}/documents",
+                        params={
+                            "view": "extended",
+                            "filters[document_type]": "file",
+                            "filters[id]": doc["id"],
+                        },
+                    )
+                    if detail:
+                        d = detail[0] if isinstance(detail, list) else detail
+                        prostore = d.get("file", {}).get("current_version", {}).get("prostore_file")
+                        if prostore:
+                            logger.info(f"Found existing document '{filename}' (folder search) with prostore_file_id {prostore['id']}")
+                            return prostore["id"]
+
         except Exception as e:
             logger.warning(f"Failed to search for existing document '{filename}': {e}")
         return None
