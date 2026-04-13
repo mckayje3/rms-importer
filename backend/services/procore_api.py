@@ -718,21 +718,13 @@ class ProcoreAPI:
     ) -> None:
         """Attach an already-uploaded file to an RFI.
 
-        Same pattern as submittal attachments: GET existing, PATCH to add.
+        Skips the GET-existing-attachments step (saves 1 API call per file).
+        The file filter already ensures we only upload new files, and Procore
+        handles duplicate prostore_file_ids gracefully.
         """
-        rfi = await self._get(
-            f"/rest/v1.0/projects/{project_id}/rfis/{rfi_id}"
-        )
-        existing_ids = [att["id"] for att in rfi.get("attachments", [])]
-
-        if prostore_file_id in existing_ids:
-            return
-
-        all_ids = existing_ids + [prostore_file_id]
-
         await self._patch(
             f"/rest/v1.0/projects/{project_id}/rfis/{rfi_id}",
-            {"rfi": {"prostore_file_ids": all_ids}},
+            {"rfi": {"prostore_file_ids": [prostore_file_id]}},
         )
 
     async def create_rfi_reply(self, project_id: int, rfi_id: int, reply_data: dict) -> dict:
