@@ -10,15 +10,15 @@ const COMMON_STEPS: { key: AppStep; label: string }[] = [
 ];
 
 const SUBMITTAL_STEPS: { key: AppStep; label: string }[] = [
-  { key: "upload-rms", label: "Upload RMS" },
-  { key: "analyze", label: "Analyze" },
+  { key: "upload-rms", label: "Upload" },
   { key: "review", label: "Review" },
   { key: "import", label: "Import" },
 ];
 
 const RFI_STEPS: { key: AppStep; label: string }[] = [
-  { key: "rfi-upload", label: "Upload RFIs" },
+  { key: "rfi-upload", label: "Upload" },
   { key: "rfi-review", label: "Review" },
+  { key: "import", label: "Import" },
 ];
 
 interface StepIndicatorProps {
@@ -28,8 +28,13 @@ interface StepIndicatorProps {
 }
 
 export function StepIndicator({ currentStep, isEmbedded = false, selectedTool = null }: StepIndicatorProps) {
-  // Map sync-review to review for step bar
-  const effectiveStep = currentStep === "sync-review" ? "review" : currentStep;
+  // Map internal steps to step bar positions
+  let effectiveStep: AppStep = currentStep;
+  if (currentStep === "sync-review" || currentStep === "analyze") {
+    effectiveStep = "review";
+  } else if (currentStep === "complete") {
+    effectiveStep = "import";
+  }
 
   // Build step list based on selected tool
   let toolSteps = SUBMITTAL_STEPS; // default
