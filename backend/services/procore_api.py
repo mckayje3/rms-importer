@@ -410,17 +410,26 @@ class ProcoreAPI:
             response.raise_for_status()
 
         # Step 3: Create document in project
-        doc_response = await self._post(
-            f"/rest/v1.0/projects/{project_id}/documents",
-            {
-                "document": {
-                    "name": filename,
-                    "upload_uuid": upload_info["uuid"],
-                    "parent_id": folder_id,
+        try:
+            doc_response = await self._post(
+                f"/rest/v1.0/projects/{project_id}/documents",
+                {
+                    "document": {
+                        "name": filename,
+                        "upload_uuid": upload_info["uuid"],
+                        "parent_id": folder_id,
+                    },
                 },
-            },
-        )
-        doc_id = doc_response["id"]
+            )
+            doc_id = doc_response["id"]
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 400:
+                # Likely duplicate filename — find existing document
+                logger.warning(f"Document create returned 400 for '{filename}', searching for existing file")
+                existing_id = await self._find_existing_document(project_id, filename, folder_id)
+                if existing_id:
+                    return existing_id
+            raise
 
         # Step 4: Get prostore_file_id
         await asyncio.sleep(0.5)  # Wait for processing
@@ -438,6 +447,33 @@ class ProcoreAPI:
             raise Exception(f"Could not get prostore_file_id for document {doc_id}")
 
         return doc["file"]["current_version"]["prostore_file"]["id"]
+
+    async def _find_existing_document(
+        self,
+        project_id: int,
+        filename: str,
+        folder_id: int,
+    ) -> Optional[int]:
+        """Find an existing document by filename and return its prostore_file_id."""
+        try:
+            docs = await self._get(
+                f"/rest/v1.0/projects/{project_id}/documents",
+                params={
+                    "view": "extended",
+                    "filters[document_type]": "file",
+                    "filters[parent_id]": folder_id,
+                    "per_page": 300,
+                },
+            )
+            for doc in docs:
+                if doc.get("name") == filename:
+                    prostore = doc.get("file", {}).get("current_version", {}).get("prostore_file")
+                    if prostore:
+                        logger.info(f"Found existing document '{filename}' with prostore_file_id {prostore['id']}")
+                        return prostore["id"]
+        except Exception as e:
+            logger.warning(f"Failed to search for existing document '{filename}': {e}")
+        return None
 
     async def list_folder_files(
         self,
