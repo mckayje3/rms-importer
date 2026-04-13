@@ -400,6 +400,166 @@ async def get_rfi_job_status(job_id: str):
     return RFIJobStatus(**_rfi_jobs[job_id])
 
 
+@router.post("/projects/{project_id}/upload-files")
+async def upload_rfi_files(
+    project_id: int,
+    files: list[UploadFile] = File(...),
+    x_auth_session: str = Header(..., alias="X-Auth-Session"),
+    x_company_id: int = Header(..., alias="X-Company-Id"),
+):
+    """Upload files and attach them to matching RFIs.
+
+    Files are matched by RFI-XXXX prefix in their filename.
+    Runs as a background job with progress tracking.
+    """
+    import os
+    import re
+    import tempfile
+
+    try:
+        access_token = get_token(x_auth_session)
+    except HTTPException:
+        raise HTTPException(status_code=401, detail="Invalid auth session")
+
+    api = ProcoreAPI(access_token, company_id=x_company_id)
+
+    # Fetch existing RFIs to build number→id lookup
+    try:
+        existing_rfis = await api.get_rfis(project_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch RFIs: {e}")
+
+    rfi_lookup: dict[int, int] = {}  # RFI number → Procore ID
+    for r in existing_rfis:
+        if r.number is not None:
+            try:
+                rfi_lookup[int(r.number)] = r.id
+            except (ValueError, TypeError):
+                pass
+
+    # Save files to temp dir and build manifest
+    temp_dir = tempfile.mkdtemp(prefix="rfi_files_")
+    manifest = []
+    unmapped = 0
+
+    for file in files:
+        # Strip folder prefix if present (browser sends "FolderName/file.pdf")
+        filename = os.path.basename(file.filename or "")
+        if not filename:
+            continue
+
+        # Extract RFI number from filename: RFI-0001, RFI-0002, etc.
+        match = re.match(r"RFI-(\d+)", filename)
+        if not match:
+            unmapped += 1
+            continue
+
+        rfi_num = int(match.group(1))
+        procore_rfi_id = rfi_lookup.get(rfi_num)
+        if not procore_rfi_id:
+            unmapped += 1
+            continue
+
+        # Save file to temp
+        temp_path = os.path.join(temp_dir, filename)
+        content = await file.read()
+        with open(temp_path, "wb") as f:
+            f.write(content)
+
+        manifest.append({
+            "filename": filename,
+            "temp_path": temp_path,
+            "rfi_number": rfi_num,
+            "procore_rfi_id": procore_rfi_id,
+        })
+
+    if not manifest:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No files matched existing RFIs. {unmapped} file(s) could not be mapped.",
+        )
+
+    # Create background job
+    job_id = str(uuid.uuid4())
+    _rfi_jobs[job_id] = {
+        "id": job_id,
+        "status": "queued",
+        "total": len(manifest),
+        "created": 0,
+        "replies_added": 0,
+        "errors": [],
+    }
+
+    asyncio.create_task(
+        _process_rfi_file_job(
+            job_id=job_id,
+            project_id=project_id,
+            manifest=manifest,
+            access_token=access_token,
+            company_id=x_company_id,
+            temp_dir=temp_dir,
+        )
+    )
+
+    return {
+        "job_id": job_id,
+        "status": "background",
+        "total_files": len(manifest),
+        "unmapped_files": unmapped,
+    }
+
+
+async def _process_rfi_file_job(
+    job_id: str,
+    project_id: int,
+    manifest: list[dict],
+    access_token: str,
+    company_id: int,
+    temp_dir: str,
+):
+    """Background job to upload files and attach to RFIs."""
+    import os
+    import shutil
+
+    job = _rfi_jobs[job_id]
+    job["status"] = "running"
+
+    api = ProcoreAPI(access_token, company_id=company_id)
+
+    try:
+        for item in manifest:
+            try:
+                # Upload file to Procore Documents
+                prostore_file_id = await api.upload_file(
+                    project_id, item["temp_path"]
+                )
+                await asyncio.sleep(2)
+
+                # Attach to the RFI
+                await api.attach_file_to_rfi(
+                    project_id, item["procore_rfi_id"], prostore_file_id
+                )
+                job["created"] += 1
+                logger.info(f"Attached {item['filename']} to RFI-{item['rfi_number']:04d}")
+
+                await asyncio.sleep(2)
+            except RateLimitError as e:
+                job["errors"].append(f"Rate limited on {item['filename']}: {e}")
+                await asyncio.sleep(60)
+            except Exception as e:
+                job["errors"].append(f"Failed {item['filename']}: {e}")
+                logger.error(f"Error uploading {item['filename']}: {e}")
+    finally:
+        # Cleanup temp files
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    job["status"] = "completed"
+    logger.info(
+        f"RFI file job {job_id} completed: {job['created']} attached, "
+        f"{len(job['errors'])} errors"
+    )
+
+
 @router.delete("/session/{session_id}")
 async def delete_session(session_id: str):
     """Delete an RFI session."""

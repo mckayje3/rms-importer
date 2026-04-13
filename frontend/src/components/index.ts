@@ -11,3 +11,4 @@ export { ProjectSetup } from "./ProjectSetup";
 export { ToolSelector } from "./ToolSelector";
 export { RFIUpload } from "./RFIUpload";
 export { RFIReview } from "./RFIReview";
+export { RFIFileUpload } from "./RFIFileUpload";

@@ -12,6 +12,7 @@ import {
   ToolSelector,
   RFIUpload,
   RFIReview,
+  RFIFileUpload,
 } from "@/components";
 import { FileJobProgress } from "@/components/FileJobProgress";
 import { auth, projects as projectsApi, submittals, sync, setup, health, rfi as rfiApi } from "@/lib/api";
@@ -890,6 +891,12 @@ export default function Home() {
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+
+            {selectedTool === "rfis" && project && company && (
+              <div className="max-w-md mx-auto mb-6 text-left">
+                <RFIFileUpload projectId={project.id} companyId={company.id} />
               </div>
             )}
 

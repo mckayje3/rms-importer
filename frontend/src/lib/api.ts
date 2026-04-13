@@ -494,6 +494,53 @@ export const rfi = {
   getJobStatus: async (jobId: string): Promise<RFIJobStatus> => {
     return fetchAPI(`/rfi/jobs/${jobId}`);
   },
+
+  uploadFiles: async (
+    projectId: number,
+    files: File[],
+    companyId: number,
+    onProgress?: (batch: number, totalBatches: number) => void
+  ): Promise<{ job_id: string; status: string; total_files: number; unmapped_files: number }> => {
+    const authSession = typeof window !== "undefined"
+      ? sessionStorage.getItem("auth_session")
+      : null;
+
+    const BATCH_SIZE = 5;
+    let lastResult: { job_id: string; status: string; total_files: number; unmapped_files: number } | null = null;
+
+    const totalBatches = Math.ceil(files.length / BATCH_SIZE);
+
+    for (let i = 0; i < files.length; i += BATCH_SIZE) {
+      const batch = files.slice(i, i + BATCH_SIZE);
+      const formData = new FormData();
+      for (const file of batch) {
+        formData.append("files", file);
+      }
+
+      const response = await fetch(
+        `${API_BASE}/rfi/projects/${projectId}/upload-files`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            ...(authSession ? { "X-Auth-Session": authSession } : {}),
+            "X-Company-Id": String(companyId),
+          },
+          body: formData,
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new APIError(response.status, error.detail || "Upload failed");
+      }
+
+      lastResult = await response.json();
+      onProgress?.(Math.floor(i / BATCH_SIZE) + 1, totalBatches);
+    }
+
+    return lastResult!;
+  },
 };
 
 // Health check
