@@ -9,17 +9,24 @@ interface RFIFileUploadProps {
   companyId: number;
 }
 
+interface FilterResult {
+  new_files: string[];
+  already_attached: string[];
+  unmapped_files: string[];
+  total_checked: number;
+}
+
 export function RFIFileUpload({ projectId, companyId }: RFIFileUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [allFiles, setAllFiles] = useState<File[]>([]);
-  const [rfiFiles, setRfiFiles] = useState<File[]>([]);
-  const [nonRfiCount, setNonRfiCount] = useState(0);
+  const [filterResult, setFilterResult] = useState<FilterResult | null>(null);
+  const [isFiltering, setIsFiltering] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<RFIJobStatus | null>(null);
   const [error, setError] = useState("");
-  const [showFiles, setShowFiles] = useState(false);
+  const [showNewFiles, setShowNewFiles] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Poll job status
@@ -48,32 +55,47 @@ export function RFIFileUpload({ projectId, companyId }: RFIFileUploadProps) {
   }, [jobId]);
 
   const handleFolderSelect = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = Array.from(e.target.files || []);
       if (files.length === 0) return;
 
-      // Filter to RFI-prefixed files
-      const rfi = files.filter((f) => /^RFI-\d+/i.test(f.name));
-      const nonRfi = files.length - rfi.length;
+      // Filter to RFI-prefixed files client-side first
+      const rfiFiles = files.filter((f) => /^RFI-\d+/i.test(f.name));
 
-      setAllFiles(files);
-      setRfiFiles(rfi);
-      setNonRfiCount(nonRfi);
+      setAllFiles(rfiFiles);
+      setFilterResult(null);
       setError("");
       setJobId(null);
       setJobStatus(null);
 
-      if (rfi.length === 0) {
+      if (rfiFiles.length === 0) {
         setError(
           `Found ${files.length} files but none match the "RFI-XXXX" naming convention.`
         );
+        return;
+      }
+
+      // Send filenames to backend for filtering (uses cached data, no API calls)
+      setIsFiltering(true);
+      try {
+        const filenames = rfiFiles.map((f) => f.name);
+        const result = await rfiApi.filterFiles(projectId, filenames);
+        setFilterResult(result);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to check files");
+      } finally {
+        setIsFiltering(false);
       }
     },
-    []
+    [projectId]
   );
 
   const handleUpload = useCallback(async () => {
-    if (rfiFiles.length === 0) return;
+    if (!filterResult || filterResult.new_files.length === 0) return;
+
+    // Only upload new files
+    const newFileNames = new Set(filterResult.new_files);
+    const filesToUpload = allFiles.filter((f) => newFileNames.has(f.name));
 
     setIsUploading(true);
     setError("");
@@ -81,7 +103,7 @@ export function RFIFileUpload({ projectId, companyId }: RFIFileUploadProps) {
     try {
       const result = await rfiApi.uploadFiles(
         projectId,
-        rfiFiles,
+        filesToUpload,
         companyId,
         (batch, total) => {
           setUploadProgress(`Sending batch ${batch} of ${total}...`);
@@ -96,12 +118,11 @@ export function RFIFileUpload({ projectId, companyId }: RFIFileUploadProps) {
       setError(err instanceof Error ? err.message : "Upload failed");
       setIsUploading(false);
     }
-  }, [rfiFiles, projectId, companyId]);
+  }, [filterResult, allFiles, projectId, companyId]);
 
   const handleClear = useCallback(() => {
     setAllFiles([]);
-    setRfiFiles([]);
-    setNonRfiCount(0);
+    setFilterResult(null);
     setError("");
     setUploadProgress("");
     setIsUploading(false);
@@ -136,15 +157,25 @@ export function RFIFileUpload({ projectId, companyId }: RFIFileUploadProps) {
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          disabled={isUploading}
+          disabled={isFiltering || isUploading}
           className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-md
             hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed
             transition-colors"
         >
-          Select RMS Files Folder
+          {isFiltering ? (
+            <span className="flex items-center gap-2">
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              Checking files...
+            </span>
+          ) : (
+            "Select RMS Files Folder"
+          )}
         </button>
 
-        {rfiFiles.length > 0 && !isUploading && !jobId && (
+        {allFiles.length > 0 && !isUploading && !jobId && (
           <button
             type="button"
             onClick={handleClear}
@@ -156,50 +187,67 @@ export function RFIFileUpload({ projectId, companyId }: RFIFileUploadProps) {
       </div>
 
       {/* Filter results */}
-      {rfiFiles.length > 0 && !jobId && (
+      {filterResult && !jobId && (
         <div className="rounded-md border border-purple-200 bg-purple-50 p-3 space-y-2">
           <div className="flex items-center gap-4 text-sm">
-            <span className="text-purple-700 font-medium">
-              {rfiFiles.length} RFI file{rfiFiles.length !== 1 ? "s" : ""} found
-            </span>
-            {nonRfiCount > 0 && (
+            {filterResult.new_files.length > 0 && (
+              <span className="text-purple-700 font-medium">
+                {filterResult.new_files.length} new file{filterResult.new_files.length !== 1 ? "s" : ""} to upload
+              </span>
+            )}
+            {filterResult.already_attached.length > 0 && (
               <span className="text-gray-500">
-                {nonRfiCount} non-RFI file{nonRfiCount !== 1 ? "s" : ""} skipped
+                {filterResult.already_attached.length} already attached
+              </span>
+            )}
+            {filterResult.unmapped_files.length > 0 && (
+              <span className="text-orange-600">
+                {filterResult.unmapped_files.length} unrecognized
               </span>
             )}
           </div>
 
-          <div>
-            <button
-              type="button"
-              onClick={() => setShowFiles(!showFiles)}
-              className="text-xs text-purple-600 hover:text-purple-800"
-            >
-              {showFiles ? "Hide" : "Show"} files
-            </button>
-            {showFiles && (
-              <ul className="mt-1 max-h-40 overflow-y-auto text-xs text-gray-600 space-y-0.5">
-                {rfiFiles.map((f) => (
-                  <li key={f.name} className="truncate">{f.name}</li>
-                ))}
-              </ul>
-            )}
-          </div>
+          {/* Expandable list of new files */}
+          {filterResult.new_files.length > 0 && (
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowNewFiles(!showNewFiles)}
+                className="text-xs text-purple-600 hover:text-purple-800"
+              >
+                {showNewFiles ? "Hide" : "Show"} new files
+              </button>
+              {showNewFiles && (
+                <ul className="mt-1 max-h-40 overflow-y-auto text-xs text-gray-600 space-y-0.5">
+                  {filterResult.new_files.map((f) => (
+                    <li key={f} className="truncate">{f}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
 
-          {!isUploading && (
+          {/* Upload button */}
+          {filterResult.new_files.length > 0 && !isUploading && (
             <button
               type="button"
               onClick={handleUpload}
               className="mt-2 px-4 py-2 text-sm font-medium text-white bg-purple-600
                 rounded-md hover:bg-purple-700 transition-colors"
             >
-              Upload & Attach {rfiFiles.length} File{rfiFiles.length !== 1 ? "s" : ""}
+              Upload & Attach {filterResult.new_files.length} File{filterResult.new_files.length !== 1 ? "s" : ""}
             </button>
+          )}
+
+          {filterResult.new_files.length === 0 && (
+            <p className="text-sm text-green-700">
+              All files are already attached. Nothing new to upload.
+            </p>
           )}
         </div>
       )}
 
-      {/* Upload / job progress */}
+      {/* Upload progress */}
       {isUploading && !jobId && uploadProgress && (
         <div className="flex items-center gap-2 text-sm text-purple-600">
           <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
@@ -210,6 +258,7 @@ export function RFIFileUpload({ projectId, companyId }: RFIFileUploadProps) {
         </div>
       )}
 
+      {/* Job status */}
       {jobStatus && (
         <div className="rounded-md border border-purple-200 bg-purple-50 p-3 space-y-2">
           <div className="flex items-center justify-between text-sm">

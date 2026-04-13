@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 # In-memory session storage for parsed RFI data
 _rfi_sessions: dict[str, RFIParseResult] = {}
 
+# Cache: project_id → {rfi_number→procore_id, attached_filenames set}
+# Populated during analyze, consumed by filter-files and upload-files
+_rfi_cache: dict[int, dict] = {}
+
 
 class RFIUploadResponse(BaseModel):
     """Response from RFI file upload."""
@@ -172,13 +176,38 @@ async def analyze_rfis(
         logger.warning(f"Failed to fetch existing RFIs: {e}")
         existing_rfis = []
 
+    # Build lookup and cache attachment info for file filtering
     existing_by_number: dict[int, object] = {}
+    rfi_lookup: dict[int, int] = {}  # number → procore_id
+    attached_files: set[str] = set()
+
     for r in existing_rfis:
         if r.number is not None:
             try:
-                existing_by_number[int(r.number)] = r
+                num = int(r.number)
+                existing_by_number[num] = r
+                rfi_lookup[num] = r.id
             except (ValueError, TypeError):
                 pass
+
+    # Fetch attachment filenames for each RFI (batch from raw data)
+    try:
+        raw_rfis = await api._get_paginated(
+            f"/rest/v1.0/projects/{project_id}/rfis"
+        )
+        for raw in raw_rfis:
+            for att in raw.get("attachments", []):
+                name = att.get("filename") or att.get("name", "")
+                if name:
+                    attached_files.add(name)
+    except Exception as e:
+        logger.warning(f"Failed to fetch RFI attachments for caching: {e}")
+
+    # Cache for filter-files and upload-files endpoints
+    _rfi_cache[project_id] = {
+        "rfi_lookup": rfi_lookup,
+        "attached_files": attached_files,
+    }
 
     creates = []
     already_exist = 0
@@ -399,6 +428,86 @@ async def _process_rfi_job(
     )
 
 
+class RFIFilterFilesRequest(BaseModel):
+    """Request to filter RFI files."""
+    filenames: list[str]
+
+
+class RFIFilterFilesResponse(BaseModel):
+    """Response from filtering RFI files."""
+    new_files: list[str]
+    already_attached: list[str]
+    unmapped_files: list[str]
+    total_checked: int
+
+
+@router.post("/projects/{project_id}/filter-files", response_model=RFIFilterFilesResponse)
+async def filter_rfi_files(
+    project_id: int,
+    request: RFIFilterFilesRequest,
+    x_auth_session: str = Header(..., alias="X-Auth-Session"),
+):
+    """Check which files are new vs already attached to RFIs.
+
+    Uses cached data from the analyze step — no Procore API calls.
+    If cache is missing (user skipped analyze), fetches fresh data.
+    """
+    import re
+
+    try:
+        get_token(x_auth_session)
+    except HTTPException:
+        raise HTTPException(status_code=401, detail="Invalid auth session")
+
+    cache = _rfi_cache.get(project_id)
+    if not cache:
+        # No cache — need to tell user to run analyze first, or fetch now
+        # For robustness, return all as new (they'll be checked during upload)
+        rfi_files = []
+        unmapped = []
+        for fn in request.filenames:
+            if re.match(r"RFI-\d+", fn):
+                rfi_files.append(fn)
+            else:
+                unmapped.append(fn)
+        return RFIFilterFilesResponse(
+            new_files=rfi_files,
+            already_attached=[],
+            unmapped_files=unmapped,
+            total_checked=len(request.filenames),
+        )
+
+    rfi_lookup = cache["rfi_lookup"]
+    attached_files = cache["attached_files"]
+
+    new_files = []
+    already_attached = []
+    unmapped = []
+
+    for fn in request.filenames:
+        match = re.match(r"RFI-(\d+)", fn)
+        if not match:
+            unmapped.append(fn)
+            continue
+
+        rfi_num = int(match.group(1))
+        if rfi_num not in rfi_lookup:
+            unmapped.append(fn)
+            continue
+
+        if fn in attached_files:
+            already_attached.append(fn)
+        else:
+            new_files.append(fn)
+
+    return RFIFilterFilesResponse(
+        new_files=new_files,
+        already_attached=already_attached,
+        unmapped_files=unmapped,
+        total_checked=len(request.filenames),
+    )
+
+
 @router.get("/jobs/{job_id}", response_model=RFIJobStatus)
 async def get_rfi_job_status(job_id: str):
     """Get status of an RFI import job."""
@@ -426,20 +535,25 @@ async def upload_rfi_files(
     except HTTPException:
         raise HTTPException(status_code=401, detail="Invalid auth session")
 
-    api = ProcoreAPI(access_token, company_id=x_company_id)
+    # Use cached RFI lookup from analyze step (avoids burning API calls)
+    cache = _rfi_cache.get(project_id)
+    if cache:
+        rfi_lookup = cache["rfi_lookup"]
+    else:
+        # No cache — fetch fresh (slower, costs API calls)
+        api = ProcoreAPI(access_token, company_id=x_company_id)
+        try:
+            existing_rfis = await api.get_rfis(project_id)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to fetch RFIs: {e}")
 
-    try:
-        existing_rfis = await api.get_rfis(project_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch RFIs: {e}")
-
-    rfi_lookup: dict[int, int] = {}
-    for r in existing_rfis:
-        if r.number is not None:
-            try:
-                rfi_lookup[int(r.number)] = r.id
-            except (ValueError, TypeError):
-                pass
+        rfi_lookup: dict[int, int] = {}
+        for r in existing_rfis:
+            if r.number is not None:
+                try:
+                    rfi_lookup[int(r.number)] = r.id
+                except (ValueError, TypeError):
+                    pass
 
     temp_dir = tempfile.mkdtemp(prefix="rfi_files_")
     manifest = []

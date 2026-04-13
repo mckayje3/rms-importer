@@ -495,6 +495,16 @@ export const rfi = {
     return fetchAPI(`/rfi/jobs/${jobId}`);
   },
 
+  filterFiles: async (
+    projectId: number,
+    filenames: string[]
+  ): Promise<{ new_files: string[]; already_attached: string[]; unmapped_files: string[]; total_checked: number }> => {
+    return fetchAPI(`/rfi/projects/${projectId}/filter-files`, {
+      method: "POST",
+      body: JSON.stringify({ filenames }),
+    });
+  },
+
   uploadFiles: async (
     projectId: number,
     files: File[],
