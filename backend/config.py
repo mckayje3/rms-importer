@@ -29,10 +29,6 @@ class Settings(BaseSettings):
     # Procore Documents folder ID for uploaded files (required for file uploads)
     procore_upload_folder_id: int = 0
 
-    # Turso/libSQL database (leave empty to use local SQLite)
-    turso_database_url: str = ""
-    turso_auth_token: str = ""
-
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

@@ -1,65 +1,21 @@
-"""Database for storing sync baselines. Supports local SQLite or Turso (libSQL) cloud."""
+"""Database for storing sync baselines. Uses SQLite (local or Railway volume)."""
 import sqlite3
 import json
 import logging
+import os
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
 from contextlib import contextmanager
 
-from config import get_settings
-
 logger = logging.getLogger(__name__)
 
 # Database file location — use Railway volume if available, otherwise local
-import os
 _volume_path = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH")
 if _volume_path:
     DB_PATH = Path(_volume_path) / "sync.db"
 else:
     DB_PATH = Path(__file__).parent / "data" / "sync.db"
-
-# Track whether Turso is available (set to False on connection failure)
-_turso_available: bool | None = None
-
-
-def _is_turso_configured() -> bool:
-    """Check if Turso cloud database is configured."""
-    settings = get_settings()
-    return bool(settings.turso_database_url and settings.turso_auth_token)
-
-
-def _turso_http_url() -> str:
-    """Convert libsql:// URL to https:// for direct HTTP connection (no embedded replica)."""
-    settings = get_settings()
-    url = settings.turso_database_url
-    if url.startswith("libsql://"):
-        url = "https://" + url[len("libsql://"):]
-    return url
-
-
-def _is_turso_available() -> bool:
-    """Check if Turso is configured and reachable."""
-    global _turso_available
-    if not _is_turso_configured():
-        return False
-    if _turso_available is not None:
-        return _turso_available
-    # First call — test the connection
-    try:
-        import libsql
-        settings = get_settings()
-        conn = libsql.connect(
-            _turso_http_url(),
-            auth_token=settings.turso_auth_token,
-        )
-        conn.close()
-        _turso_available = True
-        logger.info("Turso database connected (direct HTTP)")
-    except Exception as e:
-        _turso_available = False
-        logger.warning(f"Turso unavailable, falling back to local SQLite: {e}")
-    return _turso_available
 
 
 def get_db_path() -> Path:
@@ -68,33 +24,11 @@ def get_db_path() -> Path:
     return DB_PATH
 
 
-def _open_connection():
-    """Open a database connection — Turso via HTTP if available, local SQLite otherwise."""
-    global _turso_available
-    if _is_turso_available():
-        try:
-            import libsql
-            settings = get_settings()
-            conn = libsql.connect(
-                _turso_http_url(),
-                auth_token=settings.turso_auth_token,
-            )
-            # Test that the connection actually works
-            conn.execute("SELECT 1")
-            return conn
-        except Exception as e:
-            _turso_available = False
-            logger.warning(f"Turso connection failed, falling back to local SQLite: {e}")
-
-    conn = sqlite3.connect(get_db_path())
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
 @contextmanager
 def get_connection():
-    """Get a database connection — Turso via HTTP if available, local SQLite otherwise."""
-    conn = _open_connection()
+    """Get a SQLite database connection."""
+    conn = sqlite3.connect(get_db_path())
+    conn.row_factory = sqlite3.Row
     try:
         yield conn
         conn.commit()
@@ -193,19 +127,6 @@ def init_db():
         """)
 
 
-def _row_to_dict(row) -> dict:
-    """Convert a database row to a dict, handling both sqlite3.Row and libsql tuples."""
-    if row is None:
-        return None
-    if isinstance(row, dict):
-        return row
-    if hasattr(row, "keys"):
-        # sqlite3.Row
-        return dict(row)
-    # libsql returns tuples — shouldn't reach here with our usage
-    return row
-
-
 class SessionStore:
     """Persistent OAuth session storage."""
 
@@ -234,8 +155,7 @@ class SessionStore:
             )
             row = cursor.fetchone()
             if row:
-                data = row["token_data"] if hasattr(row, "keys") else row[0]
-                return json.loads(data)
+                return json.loads(row["token_data"])
             return None
 
     def delete_session(self, session_id: str) -> None:
@@ -274,25 +194,14 @@ class BaselineStore:
             )
             row = cursor.fetchone()
             if row:
-                # Handle both sqlite3.Row (dict-like) and libsql (tuple)
-                if hasattr(row, "keys"):
-                    return {
-                        "project_id": row["project_id"],
-                        "company_id": row["company_id"],
-                        "last_sync": row["last_sync"],
-                        "submittal_count": row["submittal_count"],
-                        "file_count": row["file_count"],
-                        "data": json.loads(row["data"])
-                    }
-                else:
-                    return {
-                        "project_id": row[0],
-                        "company_id": row[1],
-                        "last_sync": row[2],
-                        "submittal_count": row[3],
-                        "file_count": row[4],
-                        "data": json.loads(row[5])
-                    }
+                return {
+                    "project_id": row["project_id"],
+                    "company_id": row["company_id"],
+                    "last_sync": row["last_sync"],
+                    "submittal_count": row["submittal_count"],
+                    "file_count": row["file_count"],
+                    "data": json.loads(row["data"])
+                }
             return None
 
     def save_baseline(
@@ -371,31 +280,19 @@ class BaselineStore:
                 LIMIT ?
             """, (project_id, limit))
 
-            results = []
-            for row in cursor.fetchall():
-                if hasattr(row, "keys"):
-                    results.append({
-                        "id": row["id"],
-                        "sync_date": row["sync_date"],
-                        "mode": row["mode"],
-                        "creates": row["creates"],
-                        "updates": row["updates"],
-                        "file_uploads": row["file_uploads"],
-                        "errors": json.loads(row["errors"]) if row["errors"] else [],
-                        "summary": row["summary"]
-                    })
-                else:
-                    results.append({
-                        "id": row[0],
-                        "sync_date": row[1],
-                        "mode": row[2],
-                        "creates": row[3],
-                        "updates": row[4],
-                        "file_uploads": row[5],
-                        "errors": json.loads(row[6]) if row[6] else [],
-                        "summary": row[7]
-                    })
-            return results
+            return [
+                {
+                    "id": row["id"],
+                    "sync_date": row["sync_date"],
+                    "mode": row["mode"],
+                    "creates": row["creates"],
+                    "updates": row["updates"],
+                    "file_uploads": row["file_uploads"],
+                    "errors": json.loads(row["errors"]) if row["errors"] else [],
+                    "summary": row["summary"]
+                }
+                for row in cursor.fetchall()
+            ]
 
     def flag_item(
         self,
@@ -436,23 +333,7 @@ class BaselineStore:
                     (project_id,)
                 )
 
-            results = []
-            for row in cursor.fetchall():
-                if hasattr(row, "keys"):
-                    results.append(dict(row))
-                else:
-                    results.append({
-                        "id": row[0],
-                        "project_id": row[1],
-                        "submittal_key": row[2],
-                        "procore_id": row[3],
-                        "reason": row[4],
-                        "flagged_date": row[5],
-                        "resolved": row[6],
-                        "resolved_date": row[7],
-                        "resolution": row[8],
-                    })
-            return results
+            return [dict(row) for row in cursor.fetchall()]
 
     def resolve_flagged_item(self, item_id: int, resolution: str) -> bool:
         """Mark a flagged item as resolved."""
@@ -483,19 +364,7 @@ class ProjectConfigStore:
             row = cursor.fetchone()
             if not row:
                 return None
-            # Handle both sqlite3.Row (dict-like) and libsql (tuple)
-            if hasattr(row, "keys"):
-                data = dict(row)
-            elif isinstance(row, dict):
-                data = row
-            else:
-                data = {
-                    "project_id": row[0],
-                    "company_id": row[1],
-                    "config_data": row[2],
-                    "created_at": row[3],
-                    "updated_at": row[4],
-                }
+            data = dict(row)
             data["config_data"] = json.loads(data["config_data"])
             return data
 
@@ -614,17 +483,7 @@ class FileJobStore:
             if not row:
                 return None
 
-            cols = [
-                "id", "project_id", "company_id", "session_id", "status",
-                "total_files", "uploaded_files", "errors", "created_at",
-                "started_at", "completed_at", "email", "file_manifest",
-                "result_summary",
-            ]
-            if hasattr(row, "keys"):
-                data = dict(row)
-            else:
-                data = dict(zip(cols, row))
-
+            data = dict(row)
             data["errors"] = json.loads(data["errors"]) if data["errors"] else []
             data["file_manifest"] = json.loads(data["file_manifest"]) if data["file_manifest"] else []
             data["result_summary"] = json.loads(data["result_summary"]) if data["result_summary"] else None
@@ -640,16 +499,9 @@ class FileJobStore:
                 "FROM file_jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT ?",
                 (project_id, limit),
             )
-            cols = [
-                "id", "status", "total_files", "uploaded_files", "errors",
-                "created_at", "started_at", "completed_at", "result_summary",
-            ]
             results = []
             for row in cursor.fetchall():
-                if hasattr(row, "keys"):
-                    d = dict(row)
-                else:
-                    d = dict(zip(cols, row))
+                d = dict(row)
                 d["errors"] = json.loads(d["errors"]) if d["errors"] else []
                 d["result_summary"] = json.loads(d["result_summary"]) if d["result_summary"] else None
                 results.append(d)
