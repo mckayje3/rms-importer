@@ -7,9 +7,10 @@ import type { RMSSession } from "@/types";
 
 interface RMSUploadProps {
   onUploadComplete: (session: RMSSession) => void;
+  onBack?: () => void;
 }
 
-export function RMSUpload({ onUploadComplete }: RMSUploadProps) {
+export function RMSUpload({ onUploadComplete, onBack }: RMSUploadProps) {
   const [registerReportFile, setRegisterReportFile] = useState<File | null>(null);
   const [reportFile, setReportFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -73,27 +74,37 @@ export function RMSUpload({ onUploadComplete }: RMSUploadProps) {
         </div>
       )}
 
-      <button
-        onClick={handleUpload}
-        disabled={!canUpload || uploading}
-        className={`
-          w-full py-3 px-4 rounded-lg font-medium transition-colors flex items-center justify-center gap-2
-          ${
-            canUpload && !uploading
-              ? "bg-orange-500 text-white hover:bg-orange-600"
-              : "bg-gray-200 text-gray-500 cursor-not-allowed"
-          }
-        `}
-      >
-        {uploading ? (
-          <>
-            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-            Uploading & Parsing...
-          </>
-        ) : (
-          "Upload & Parse Files"
+      <div className="flex gap-4">
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="flex-1 py-3 px-4 rounded-lg font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
+          >
+            Back
+          </button>
         )}
-      </button>
+        <button
+          onClick={handleUpload}
+          disabled={!canUpload || uploading}
+          className={`
+            flex-1 py-3 px-4 rounded-lg font-medium transition-colors flex items-center justify-center gap-2
+            ${
+              canUpload && !uploading
+                ? "bg-orange-500 text-white hover:bg-orange-600"
+                : "bg-gray-200 text-gray-500 cursor-not-allowed"
+            }
+          `}
+        >
+          {uploading ? (
+            <>
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+              Uploading & Parsing...
+            </>
+          ) : (
+            "Upload & Parse Files"
+          )}
+        </button>
+      </div>
     </div>
   );
 }

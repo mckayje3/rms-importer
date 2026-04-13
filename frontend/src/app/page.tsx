@@ -513,7 +513,13 @@ export default function Home() {
             <p className="text-gray-600 mb-6">
               Upload your RMS export files to begin the import process.
             </p>
-            <RMSUpload onUploadComplete={handleRmsUpload} />
+            <RMSUpload
+              onUploadComplete={handleRmsUpload}
+              onBack={() => {
+                setSelectedTool(null);
+                setStep("select-tool");
+              }}
+            />
           </div>
         );
 
