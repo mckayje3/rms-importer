@@ -689,7 +689,6 @@ class ProcoreAPI:
             status=data.get("status"),
             due_date=data.get("due_date"),
             created_at=data.get("created_at"),
-            question_body=data.get("question", {}).get("body") if isinstance(data.get("question"), dict) else None,
         )
 
     async def create_rfi(self, project_id: int, rfi_data: dict) -> dict:

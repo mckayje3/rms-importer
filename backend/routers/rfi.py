@@ -163,8 +163,14 @@ async def analyze_rfis(
         logger.warning(f"Failed to fetch existing RFIs: {e}")
         existing_rfis = []
 
-    # Build lookup by RFI number
-    existing_by_number = {r.number: r for r in existing_rfis if r.number is not None}
+    # Build lookup by RFI number (number is a string in Procore, convert to int for matching)
+    existing_by_number: dict[int, object] = {}
+    for r in existing_rfis:
+        if r.number is not None:
+            try:
+                existing_by_number[int(r.number)] = r
+            except (ValueError, TypeError):
+                pass
 
     creates = []
     already_exist = 0
@@ -205,6 +211,36 @@ async def analyze_rfis(
     return RFIAnalyzeResponse(plan=plan, summary=summary)
 
 
+async def _get_rfi_manager_id(api: ProcoreAPI, project_id: int) -> Optional[int]:
+    """Get the RFI manager ID for the project.
+
+    Tries to get the current user's ID via the /me endpoint.
+    Falls back to extracting from an existing RFI.
+    """
+    # Try /me endpoint to get the current user
+    try:
+        me = await api._get("/rest/v1.0/me")
+        if me and me.get("id"):
+            return me["id"]
+    except Exception as e:
+        logger.warning(f"Failed to get current user via /me: {e}")
+
+    # Fallback: get rfi_manager from an existing RFI
+    try:
+        raw = await api._get(
+            f"/rest/v1.0/projects/{project_id}/rfis",
+            params={"per_page": 1},
+        )
+        if raw and len(raw) > 0:
+            mgr = raw[0].get("rfi_manager")
+            if mgr and mgr.get("id"):
+                return mgr["id"]
+    except Exception as e:
+        logger.warning(f"Failed to get rfi_manager from existing RFIs: {e}")
+
+    return None
+
+
 @router.post("/projects/{project_id}/execute", response_model=RFIExecuteResponse)
 async def execute_rfi_import(
     project_id: int,
@@ -229,7 +265,21 @@ async def execute_rfi_import(
     except Exception:
         existing_rfis = []
 
-    existing_by_number = {r.number: r for r in existing_rfis if r.number is not None}
+    existing_by_number: dict[int, object] = {}
+    for r in existing_rfis:
+        if r.number is not None:
+            try:
+                existing_by_number[int(r.number)] = r
+            except (ValueError, TypeError):
+                pass
+
+    # Get rfi_manager_id (required for Procore RFI creation)
+    rfi_manager_id = await _get_rfi_manager_id(api, project_id)
+    if not rfi_manager_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not determine RFI Manager. Ensure the project has at least one existing RFI or the current user has RFI permissions.",
+        )
 
     # Create background job
     job_id = str(uuid.uuid4())
@@ -251,6 +301,7 @@ async def execute_rfi_import(
             existing_by_number=existing_by_number,
             access_token=access_token,
             company_id=request.company_id,
+            rfi_manager_id=rfi_manager_id,
             apply_creates=request.apply_creates,
             apply_replies=request.apply_replies,
         )
@@ -272,6 +323,7 @@ async def _process_rfi_job(
     existing_by_number: dict,
     access_token: str,
     company_id: int,
+    rfi_manager_id: int,
     apply_creates: bool,
     apply_replies: bool,
 ):
@@ -289,20 +341,21 @@ async def _process_rfi_job(
             continue
 
         try:
-            # Build RFI data
+            # Build RFI data — field names confirmed via API testing:
+            # - question: {body: "..."} (singular, not questions array)
+            # - rfi_manager_id: required
+            # - assignee_ids: required array
+            # - number: string
             rfi_data = {
                 "subject": rfi.subject,
                 "number": str(rfi.number),
-                "question_body": rfi.question_body,
+                "rfi_manager_id": rfi_manager_id,
+                "assignee_ids": [rfi_manager_id],
+                "question": {"body": rfi.question_body},
             }
 
             if rfi.date_requested:
                 rfi_data["due_date"] = rfi.date_requested.isoformat()
-
-            # Create as Draft first (fewest required fields).
-            # Status will be adjusted once we confirm Procore's
-            # accepted values and required fields for Open/Closed.
-            rfi_data["status"] = "draft"
 
             # Create the RFI
             created = await api.create_rfi(project_id, rfi_data)
@@ -320,12 +373,11 @@ async def _process_rfi_job(
                 except Exception as e:
                     job["errors"].append(f"Reply for {rfi.rfi_number}: {str(e)}")
 
-            # Rate limit delay
+            # Rate limit delay (create + possible reply = 2-3 API calls per RFI)
             await asyncio.sleep(2)
 
         except RateLimitError as e:
             job["errors"].append(f"Rate limited on {rfi.rfi_number}: {str(e)}")
-            # Wait longer and continue
             await asyncio.sleep(60)
         except Exception as e:
             job["errors"].append(f"Failed to create {rfi.rfi_number}: {str(e)}")
@@ -346,98 +398,6 @@ async def get_rfi_job_status(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
 
     return RFIJobStatus(**_rfi_jobs[job_id])
-
-
-@router.get("/projects/{project_id}/debug")
-async def debug_rfis(
-    project_id: int,
-    company_id: int,
-    x_auth_session: str = Header(..., alias="X-Auth-Session"),
-):
-    """
-    Debug endpoint: fetch one existing RFI raw from Procore,
-    then attempt to create a test Draft RFI and capture the
-    full error response. Deletes the test RFI if created.
-    """
-    try:
-        access_token = get_token(x_auth_session)
-    except HTTPException:
-        raise HTTPException(status_code=401, detail="Invalid auth session")
-
-    api = ProcoreAPI(access_token, company_id=company_id)
-    result = {"existing_rfi_sample": None, "create_attempt": None}
-
-    # 1. Fetch one existing RFI raw
-    try:
-        raw = await api._get(
-            f"/rest/v1.0/projects/{project_id}/rfis",
-            params={"per_page": 1},
-        )
-        if raw:
-            result["existing_rfi_sample"] = raw[0]
-    except Exception as e:
-        result["existing_rfi_sample"] = f"Error: {e}"
-
-    # 2. Try multiple create variants to find what works
-    import httpx
-
-    rfi_manager_id = None
-    if isinstance(result["existing_rfi_sample"], dict):
-        mgr = result["existing_rfi_sample"].get("rfi_manager")
-        if mgr:
-            rfi_manager_id = mgr.get("id")
-
-    # Try several variants
-    variants = {
-        "v1.1_minimal": {
-            "url": f"{api.base_url}/rest/v1.1/projects/{project_id}/rfis",
-            "body": {"rfi": {"subject": "API TEST - DELETE ME", "rfi_manager_id": rfi_manager_id}},
-        },
-        "v1.0_no_questions": {
-            "url": f"{api.base_url}/rest/v1.0/projects/{project_id}/rfis",
-            "body": {"rfi": {"subject": "API TEST - DELETE ME", "rfi_manager_id": rfi_manager_id, "assignee_ids": [rfi_manager_id]}},
-        },
-        "v1.0_with_number": {
-            "url": f"{api.base_url}/rest/v1.0/projects/{project_id}/rfis",
-            "body": {"rfi": {"subject": "API TEST - DELETE ME", "number": "999", "rfi_manager_id": rfi_manager_id, "assignee_ids": [rfi_manager_id]}},
-        },
-        "v1.0_question_body": {
-            "url": f"{api.base_url}/rest/v1.0/projects/{project_id}/rfis",
-            "body": {"rfi": {"subject": "API TEST - DELETE ME", "number": "998", "rfi_manager_id": rfi_manager_id, "assignee_ids": [rfi_manager_id], "question": {"body": "Test question"}}},
-        },
-    }
-
-    result["create_attempts"] = {}
-    for name, variant in variants.items():
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    variant["url"],
-                    headers={**api._headers(), "Content-Type": "application/json"},
-                    json=variant["body"],
-                    timeout=30.0,
-                )
-                attempt = {
-                    "status_code": resp.status_code,
-                    "request_body": variant["body"],
-                }
-                if resp.status_code < 500:
-                    attempt["response"] = resp.json()
-                else:
-                    attempt["response"] = resp.text
-                if resp.status_code in (200, 201):
-                    attempt["SUCCESS"] = True
-                    created_id = resp.json().get("id")
-                    if created_id:
-                        attempt["created_id"] = created_id
-                result["create_attempts"][name] = attempt
-        except Exception as e:
-            result["create_attempts"][name] = {"error": str(e), "request_body": variant["body"]}
-        # Small delay between attempts
-        import asyncio
-        await asyncio.sleep(1)
-
-    return result
 
 
 @router.delete("/session/{session_id}")

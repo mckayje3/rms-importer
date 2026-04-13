@@ -134,9 +134,8 @@ class ProcoreRFI(BaseModel):
     """Procore RFI."""
 
     id: int
-    number: Optional[int] = None
+    number: Optional[str] = None  # String in Procore API (e.g., "61")
     subject: str
     status: Optional[str] = None  # "draft", "open", "closed"
     due_date: Optional[str] = None
     created_at: Optional[datetime] = None
-    question_body: Optional[str] = None
