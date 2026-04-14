@@ -648,6 +648,8 @@ async def _process_rfi_file_job(
                 )
                 await asyncio.sleep(2)
 
+                await asyncio.sleep(2)  # Spike limit: pause before attach
+
                 await api.attach_file_to_rfi(
                     project_id, item["procore_rfi_id"], prostore_file_id
                 )
@@ -660,7 +662,7 @@ async def _process_rfi_file_job(
                     result_summary={"uploaded": uploaded, "total": len(manifest), "errors": len(errors)},
                 )
 
-                await asyncio.sleep(2)
+                await asyncio.sleep(5)  # Cooldown between files
             except RateLimitError as e:
                 errors.append(f"Rate limited on {item['filename']}: {e}")
                 await asyncio.sleep(60)

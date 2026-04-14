@@ -365,13 +365,17 @@ class ProcoreAPI:
         """
         Upload a file to Procore and return its prostore_file_id.
 
-        Steps 1-4 of the Procore upload process:
+        First checks if the file already exists (by name) to avoid
+        duplicate uploads and wasted API calls. If found, returns
+        the existing prostore_file_id immediately (1 API call).
+
+        Otherwise does the full upload (4 API calls):
         1. Create upload → get S3 presigned URL
         2. Upload file bytes to S3
         3. Create document in project
         4. Get prostore_file_id from document
 
-        Returns prostore_file_id. Call attach_file_to_submittal() to attach it.
+        Returns prostore_file_id.
         """
         import os
         import mimetypes
@@ -386,6 +390,14 @@ class ProcoreAPI:
         filename = os.path.basename(file_path)
         content_type = mimetypes.guess_type(filename)[0] or "application/pdf"
 
+        # Check if file already exists BEFORE uploading (1 API call vs 4+)
+        existing_id = await self._find_existing_document(project_id, filename, folder_id)
+        if existing_id:
+            logger.info(f"File '{filename}' already in Documents, reusing prostore_file_id {existing_id}")
+            return existing_id
+
+        await asyncio.sleep(1)  # Spike limit protection
+
         # Step 1: Create project upload
         upload_info = await self._post(
             f"/rest/v1.0/projects/{project_id}/uploads",
@@ -395,7 +407,7 @@ class ProcoreAPI:
             },
         )
 
-        # Step 2: Upload to S3
+        # Step 2: Upload to S3 (not a Procore API call — no rate limit)
         file_bytes = open(file_path, "rb").read()
         async with httpx.AsyncClient() as client:
             files = {"file": (filename, file_bytes, content_type)}
@@ -409,33 +421,24 @@ class ProcoreAPI:
             )
             response.raise_for_status()
 
+        await asyncio.sleep(1)  # Spike limit protection
+
         # Step 3: Create document in project
-        try:
-            doc_response = await self._post(
-                f"/rest/v1.0/projects/{project_id}/documents",
-                {
-                    "document": {
-                        "name": filename,
-                        "upload_uuid": upload_info["uuid"],
-                        "parent_id": folder_id,
-                    },
+        doc_response = await self._post(
+            f"/rest/v1.0/projects/{project_id}/documents",
+            {
+                "document": {
+                    "name": filename,
+                    "upload_uuid": upload_info["uuid"],
+                    "parent_id": folder_id,
                 },
-            )
-            doc_id = doc_response["id"]
-        except Exception as e:
-            # 400 = likely duplicate filename from a previous interrupted upload.
-            # Search the folder for the existing file and reuse its prostore_file_id.
-            error_str = str(e)
-            if "400" in error_str or "Bad Request" in error_str:
-                logger.warning(f"Document create failed for '{filename}': {error_str}. Searching for existing file...")
-                existing_id = await self._find_existing_document(project_id, filename, folder_id)
-                if existing_id:
-                    return existing_id
-                logger.error(f"Could not find existing document '{filename}' in folder {folder_id}")
-            raise
+            },
+        )
+        doc_id = doc_response["id"]
+
+        await asyncio.sleep(1)  # Spike limit protection
 
         # Step 4: Get prostore_file_id
-        await asyncio.sleep(0.5)  # Wait for processing
         docs = await self._get(
             f"/rest/v1.0/projects/{project_id}/documents",
             params={
@@ -451,6 +454,10 @@ class ProcoreAPI:
 
         return doc["file"]["current_version"]["prostore_file"]["id"]
 
+    # Cache of known documents: {project_id: {filename: prostore_file_id}}
+    # Populated once per project on first lookup, reused for all subsequent files.
+    _doc_cache: dict[int, dict[str, int]] = {}
+
     async def _find_existing_document(
         self,
         project_id: int,
@@ -459,58 +466,35 @@ class ProcoreAPI:
     ) -> Optional[int]:
         """Find an existing document by filename and return its prostore_file_id.
 
-        Searches recent documents across all folders (parent_id filter
-        doesn't work reliably with extended view). Matches by exact name.
+        Uses a per-project cache: first call fetches all docs in the folder
+        (1 API call), subsequent calls are free.
         """
-        try:
-            # Search recent docs with extended view to get prostore_file info
-            docs = await self._get(
-                f"/rest/v1.0/projects/{project_id}/documents",
-                params={
-                    "view": "extended",
-                    "filters[document_type]": "file",
-                    "per_page": 100,
-                    "sort": "-updated_at",
-                },
-            )
-            for doc in docs:
-                if doc.get("name") == filename:
+        # Build cache on first call for this project
+        if project_id not in self._doc_cache:
+            self._doc_cache[project_id] = {}
+            try:
+                docs = await self._get(
+                    f"/rest/v1.0/projects/{project_id}/documents",
+                    params={
+                        "view": "extended",
+                        "filters[document_type]": "file",
+                        "filters[parent_id]": folder_id,
+                        "per_page": 300,
+                    },
+                )
+                for doc in docs:
+                    name = doc.get("name", "")
                     prostore = doc.get("file", {}).get("current_version", {}).get("prostore_file")
-                    if prostore:
-                        logger.info(f"Found existing document '{filename}' with prostore_file_id {prostore['id']}")
-                        return prostore["id"]
+                    if name and prostore:
+                        self._doc_cache[project_id][name] = prostore["id"]
+                logger.info(f"Cached {len(self._doc_cache[project_id])} existing documents for project {project_id}")
+            except Exception as e:
+                logger.warning(f"Failed to cache existing documents: {e}")
 
-            # If not in recent 100, search the specific folder without extended view
-            # and then fetch the detail for the matching doc
-            folder_docs = await self._get(
-                f"/rest/v1.0/projects/{project_id}/documents",
-                params={
-                    "filters[document_type]": "file",
-                    "filters[parent_id]": folder_id,
-                    "per_page": 300,
-                },
-            )
-            for doc in folder_docs:
-                if doc.get("name") == filename:
-                    # Fetch with extended view to get prostore_file
-                    detail = await self._get(
-                        f"/rest/v1.0/projects/{project_id}/documents",
-                        params={
-                            "view": "extended",
-                            "filters[document_type]": "file",
-                            "filters[id]": doc["id"],
-                        },
-                    )
-                    if detail:
-                        d = detail[0] if isinstance(detail, list) else detail
-                        prostore = d.get("file", {}).get("current_version", {}).get("prostore_file")
-                        if prostore:
-                            logger.info(f"Found existing document '{filename}' (folder search) with prostore_file_id {prostore['id']}")
-                            return prostore["id"]
-
-        except Exception as e:
-            logger.warning(f"Failed to search for existing document '{filename}': {e}")
-        return None
+        prostore_id = self._doc_cache[project_id].get(filename)
+        if prostore_id:
+            logger.info(f"Found existing document '{filename}' (cached) with prostore_file_id {prostore_id}")
+        return prostore_id
 
     async def list_folder_files(
         self,
