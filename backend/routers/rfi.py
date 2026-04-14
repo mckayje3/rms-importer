@@ -10,7 +10,10 @@ from services.rfi_parser import RFIParser
 from services.procore_api import ProcoreAPI, RateLimitError
 from models.rfi import RFIParseResult, RFICreateAction, RFISyncPlan
 from routers.auth import get_token
+from config import get_settings
 from database import file_job_store
+
+settings = get_settings()
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -190,18 +193,20 @@ async def analyze_rfis(
             except (ValueError, TypeError):
                 pass
 
-    # Fetch attachment filenames for each RFI (batch from raw data)
+    # Check Documents folder for already-uploaded RFI files.
+    # The RFI list endpoint doesn't include attachments, so we check
+    # the upload folder instead — files there were uploaded by previous runs.
     try:
-        raw_rfis = await api._get_paginated(
-            f"/rest/v1.0/projects/{project_id}/rfis"
+        existing_docs = await api.list_folder_files(
+            project_id, settings.procore_upload_folder_id
         )
-        for raw in raw_rfis:
-            for att in raw.get("attachments", []):
-                name = att.get("filename") or att.get("name", "")
-                if name:
-                    attached_files.add(name)
+        import re
+        for name in existing_docs:
+            if re.match(r"RFI-\d+", name):
+                attached_files.add(name)
+        logger.info(f"Found {len(attached_files)} RFI files already in Documents folder")
     except Exception as e:
-        logger.warning(f"Failed to fetch RFI attachments for caching: {e}")
+        logger.warning(f"Failed to check Documents folder for existing files: {e}")
 
     # Cache for filter-files and upload-files endpoints
     _rfi_cache[project_id] = {
