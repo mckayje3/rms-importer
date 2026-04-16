@@ -611,4 +611,27 @@ export const health = async (): Promise<{ status: string }> => {
   return fetchAPI("/health");
 };
 
+// Debug
+export const debugRfiReply = async (
+  projectId: number,
+  rfiId: number,
+  companyId: number,
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any> => {
+  const authSession = typeof window !== "undefined"
+    ? sessionStorage.getItem("auth_session")
+    : null;
+  const response = await fetch(
+    `${API_BASE}/rfi-debug/projects/${projectId}/debug-reply/${rfiId}`,
+    {
+      credentials: "include",
+      headers: {
+        ...(authSession ? { "X-Auth-Session": authSession } : {}),
+        "X-Company-Id": String(companyId),
+      },
+    }
+  );
+  return response.json();
+};
+
 export { APIError };
