@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
 from routers import auth, projects, submittals, rms_upload, health, qaqc, sync, setup, rfi
+from routers import rfi_debug
 
 settings = get_settings()
 
@@ -37,6 +38,7 @@ app.include_router(qaqc.router, prefix="/qaqc", tags=["QAQC Deficiencies"])
 app.include_router(sync.router, prefix="/sync", tags=["Sync"])
 app.include_router(setup.router, prefix="/setup", tags=["Setup"])
 app.include_router(rfi.router, prefix="/rfi", tags=["RFI"])
+app.include_router(rfi_debug.router, prefix="/rfi-debug", tags=["RFI Debug"])
 
 
 @app.get("/")
