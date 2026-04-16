@@ -629,6 +629,10 @@ async def _process_rfi_job(
                     continue
 
                 try:
+                    # Reopen closed RFIs before adding reply (Procore blocks replies on closed RFIs)
+                    await api.update_rfi(project_id, procore_rfi_id, {"status": "open"})
+                    await asyncio.sleep(1)
+
                     # Upload response files if available
                     prostore_ids = await _upload_response_files(
                         api, project_id, number, response_file_map, errors
