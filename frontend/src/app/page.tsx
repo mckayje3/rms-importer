@@ -61,6 +61,7 @@ export default function Home() {
   const [rfiSession, setRfiSession] = useState<RFISession | null>(null);
   const [rfiAnalysis, setRfiAnalysis] = useState<RFIAnalyzeResponse | null>(null);
   const [rfiResult, setRfiResult] = useState<{ created: number; replies: number; responsesAdded: number; errors: string[] } | null>(null);
+  const [rfiFiles, setRfiFiles] = useState<File[]>([]);
 
   // Check authentication on mount
   useEffect(() => {
@@ -344,8 +345,9 @@ export default function Home() {
     }
   };
 
-  const handleRfiUpload = async (session: RFISession) => {
+  const handleRfiUpload = async (session: RFISession, files: File[]) => {
     setRfiSession(session);
+    setRfiFiles(files);
     if (!project || !company) return;
 
     // Show loading state while analyzing
@@ -713,6 +715,7 @@ export default function Home() {
               projectId={project!.id}
               sessionId={rfiSession.session_id}
               companyId={company!.id}
+              rfiFiles={rfiFiles}
               onComplete={(result) => {
                 setRfiResult(result);
                 setStep("complete");
@@ -915,7 +918,11 @@ export default function Home() {
 
             {selectedTool === "rfis" && project && company && (
               <div className="max-w-md mx-auto mb-6 text-left">
-                <RFIFileUpload projectId={project.id} companyId={company.id} />
+                <RFIFileUpload
+                  projectId={project.id}
+                  companyId={company.id}
+                  excludeFiles={rfiFiles.filter(f => /^RFI-\d+\s*Response/i.test(f.name)).map(f => f.name)}
+                />
               </div>
             )}
 
@@ -960,6 +967,7 @@ export default function Home() {
                 setRfiSession(null);
                 setRfiAnalysis(null);
                 setRfiResult(null);
+                setRfiFiles([]);
               }}
               className="bg-orange-500 text-white px-8 py-3 rounded-lg font-medium hover:bg-orange-600 transition-colors"
             >

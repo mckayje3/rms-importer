@@ -11,6 +11,7 @@ interface RFIReviewProps {
   projectId: number;
   sessionId: string;
   companyId: number;
+  rfiFiles?: File[];
   onComplete: (result: { created: number; replies: number; responsesAdded: number; errors: string[] }) => void;
   onCancel: () => void;
 }
@@ -21,6 +22,7 @@ export function RFIReview({
   projectId,
   sessionId,
   companyId,
+  rfiFiles = [],
   onComplete,
   onCancel,
 }: RFIReviewProps) {
@@ -67,17 +69,25 @@ export function RFIReview({
     };
   }, [jobId]);
 
+  // Response files from the folder picker (RFI-XXXX Response*)
+  const responseFiles = rfiFiles.filter(f => /^RFI-\d+\s*Response/i.test(f.name));
+
   const handleExecute = async () => {
     setExecuting(true);
     setError(null);
 
     try {
-      const result = await rfiApi.execute(projectId, sessionId, companyId, {
+      const options = {
         creates: applyCreates,
         replies: applyReplies,
         responseUpdates: applyResponseUpdates,
         responseUpdateItems: applyResponseUpdates ? plan.response_updates : [],
-      });
+      };
+
+      // Use multipart endpoint when we have response files to attach
+      const result = responseFiles.length > 0
+        ? await rfiApi.executeWithFiles(projectId, sessionId, companyId, options, responseFiles)
+        : await rfiApi.execute(projectId, sessionId, companyId, options);
 
       if (result.job_id) {
         setJobId(result.job_id);
@@ -274,6 +284,16 @@ export function RFIReview({
               </span>
             </label>
           )}
+        </div>
+      )}
+
+      {/* Response file info */}
+      {responseFiles.length > 0 && (applyReplies || applyResponseUpdates) && (
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+          <p className="text-sm text-purple-700">
+            {responseFiles.length} response file{responseFiles.length !== 1 ? "s" : ""} will
+            be attached to replies.
+          </p>
         </div>
       )}
 

@@ -498,6 +498,52 @@ export const rfi = {
     });
   },
 
+  executeWithFiles: async (
+    projectId: number,
+    sessionId: string,
+    companyId: number,
+    options: {
+      creates: boolean;
+      replies: boolean;
+      responseUpdates: boolean;
+      responseUpdateItems?: { rfi_number: string; number: number; procore_rfi_id: number; response_body: string; date_answered: string | null }[];
+    },
+    responseFiles: File[]
+  ): Promise<RFIExecuteResponse> => {
+    const authSession = typeof window !== "undefined"
+      ? sessionStorage.getItem("auth_session")
+      : null;
+
+    const formData = new FormData();
+    formData.append("request_json", JSON.stringify({
+      session_id: sessionId,
+      company_id: companyId,
+      apply_creates: options.creates,
+      apply_replies: options.replies,
+      apply_response_updates: options.responseUpdates,
+      response_updates: options.responseUpdateItems || [],
+    }));
+    for (const file of responseFiles) {
+      formData.append("response_files", file);
+    }
+
+    const response = await fetch(`${API_BASE}/rfi/projects/${projectId}/execute-with-files`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        ...(authSession ? { "X-Auth-Session": authSession } : {}),
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new APIError(response.status, error);
+    }
+
+    return response.json();
+  },
+
   getJobStatus: async (jobId: string): Promise<RFIJobStatus> => {
     return fetchAPI(`/rfi/jobs/${jobId}`);
   },

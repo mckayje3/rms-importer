@@ -7,6 +7,7 @@ import type { RFIJobStatus } from "@/types";
 interface RFIFileUploadProps {
   projectId: number;
   companyId: number;
+  excludeFiles?: string[];
 }
 
 interface FilterResult {
@@ -16,7 +17,7 @@ interface FilterResult {
   total_checked: number;
 }
 
-export function RFIFileUpload({ projectId, companyId }: RFIFileUploadProps) {
+export function RFIFileUpload({ projectId, companyId, excludeFiles = [] }: RFIFileUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [allFiles, setAllFiles] = useState<File[]>([]);
   const [filterResult, setFilterResult] = useState<FilterResult | null>(null);
@@ -59,8 +60,11 @@ export function RFIFileUpload({ projectId, companyId }: RFIFileUploadProps) {
       const files = Array.from(e.target.files || []);
       if (files.length === 0) return;
 
-      // Filter to RFI-prefixed files client-side first
-      const rfiFiles = files.filter((f) => /^RFI-\d+/i.test(f.name));
+      // Filter to RFI-prefixed files, excluding response files already handled
+      const excludeSet = new Set(excludeFiles);
+      const rfiFiles = files
+        .filter((f) => /^RFI-\d+/i.test(f.name))
+        .filter((f) => !excludeSet.has(f.name));
 
       setAllFiles(rfiFiles);
       setFilterResult(null);
