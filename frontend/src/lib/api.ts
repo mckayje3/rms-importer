@@ -478,7 +478,12 @@ export const rfi = {
     projectId: number,
     sessionId: string,
     companyId: number,
-    options: { creates: boolean; replies: boolean }
+    options: {
+      creates: boolean;
+      replies: boolean;
+      responseUpdates: boolean;
+      responseUpdateItems?: { rfi_number: string; number: number; procore_rfi_id: number; response_body: string; date_answered: string | null }[];
+    }
   ): Promise<RFIExecuteResponse> => {
     return fetchAPI(`/rfi/projects/${projectId}/execute`, {
       method: "POST",
@@ -487,6 +492,8 @@ export const rfi = {
         company_id: companyId,
         apply_creates: options.creates,
         apply_replies: options.replies,
+        apply_response_updates: options.responseUpdates,
+        response_updates: options.responseUpdateItems || [],
       }),
     });
   },

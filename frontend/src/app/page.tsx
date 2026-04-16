@@ -60,7 +60,7 @@ export default function Home() {
   const [selectedTool, setSelectedTool] = useState<ToolType | null>(null);
   const [rfiSession, setRfiSession] = useState<RFISession | null>(null);
   const [rfiAnalysis, setRfiAnalysis] = useState<RFIAnalyzeResponse | null>(null);
-  const [rfiResult, setRfiResult] = useState<{ created: number; replies: number; errors: string[] } | null>(null);
+  const [rfiResult, setRfiResult] = useState<{ created: number; replies: number; responsesAdded: number; errors: string[] } | null>(null);
 
   // Check authentication on mount
   useEffect(() => {
@@ -876,14 +876,27 @@ export default function Home() {
             {rfiResult && (
               <div className="bg-gray-50 rounded-lg p-6 max-w-sm mx-auto mb-6">
                 <div className="space-y-3">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">RFIs Created</span>
-                    <span className="font-medium text-green-600">{rfiResult.created}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Replies Added</span>
-                    <span className="font-medium text-blue-600">{rfiResult.replies}</span>
-                  </div>
+                  {rfiResult.created > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">RFIs Created</span>
+                      <span className="font-medium text-green-600">{rfiResult.created}</span>
+                    </div>
+                  )}
+                  {rfiResult.replies > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Replies Added</span>
+                      <span className="font-medium text-blue-600">{rfiResult.replies}</span>
+                    </div>
+                  )}
+                  {rfiResult.responsesAdded > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Responses Added</span>
+                      <span className="font-medium text-blue-600">{rfiResult.responsesAdded}</span>
+                    </div>
+                  )}
+                  {rfiResult.created === 0 && rfiResult.replies === 0 && rfiResult.responsesAdded === 0 && rfiResult.errors.length === 0 && (
+                    <p className="text-sm text-gray-500 text-center">No changes made.</p>
+                  )}
                   {rfiResult.errors.length > 0 && (
                     <div className="mt-3 pt-3 border-t border-gray-200">
                       <p className="text-sm font-medium text-red-600 mb-1">

@@ -47,10 +47,21 @@ class RFICreateAction(BaseModel):
     is_answered: bool = False
 
 
+class RFIResponseAction(BaseModel):
+    """An existing RFI that needs a government response added."""
+
+    rfi_number: str
+    number: int
+    procore_rfi_id: int
+    response_body: str
+    date_answered: Optional[date] = None
+
+
 class RFISyncPlan(BaseModel):
     """Plan for syncing RFIs to Procore."""
 
     creates: list[RFICreateAction]
+    response_updates: list[RFIResponseAction] = []
     already_exist: int = 0
     total_rms: int
     has_changes: bool = False

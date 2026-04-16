@@ -11,7 +11,7 @@ interface RFIReviewProps {
   projectId: number;
   sessionId: string;
   companyId: number;
-  onComplete: (result: { created: number; replies: number; errors: string[] }) => void;
+  onComplete: (result: { created: number; replies: number; responsesAdded: number; errors: string[] }) => void;
   onCancel: () => void;
 }
 
@@ -26,6 +26,7 @@ export function RFIReview({
 }: RFIReviewProps) {
   const [applyCreates, setApplyCreates] = useState(true);
   const [applyReplies, setApplyReplies] = useState(true);
+  const [applyResponseUpdates, setApplyResponseUpdates] = useState(true);
   const [executing, setExecuting] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<RFIJobStatus | null>(null);
@@ -49,6 +50,7 @@ export function RFIReview({
           onCompleteRef.current({
             created: status.created,
             replies: status.replies_added,
+            responsesAdded: status.responses_added,
             errors: status.errors,
           });
         }
@@ -73,6 +75,8 @@ export function RFIReview({
       const result = await rfiApi.execute(projectId, sessionId, companyId, {
         creates: applyCreates,
         replies: applyReplies,
+        responseUpdates: applyResponseUpdates,
+        responseUpdateItems: applyResponseUpdates ? plan.response_updates : [],
       });
 
       if (result.job_id) {
@@ -81,6 +85,7 @@ export function RFIReview({
         onComplete({
           created: result.created,
           replies: result.replies_added,
+          responsesAdded: 0,
           errors: result.errors,
         });
       }
@@ -90,10 +95,16 @@ export function RFIReview({
     }
   };
 
+  const totalOperations = plan.creates.length + (applyResponseUpdates ? plan.response_updates.length : 0);
+  const nothingSelected = !applyCreates && !applyReplies && !applyResponseUpdates;
+  const hasCreates = plan.creates.length > 0;
+  const hasResponseUpdates = plan.response_updates.length > 0;
+
   // Show progress if running
   if (jobId && jobStatus) {
+    const completedOps = jobStatus.created + jobStatus.responses_added + (jobStatus.errors?.length || 0);
     const progress = jobStatus.total > 0
-      ? Math.round(((jobStatus.created + (jobStatus.errors?.length || 0)) / plan.creates.length) * 100)
+      ? Math.round((completedOps / jobStatus.total) * 100)
       : 0;
 
     return (
@@ -102,7 +113,9 @@ export function RFIReview({
           <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-orange-500 mx-auto mb-4"></div>
           <p className="text-gray-700 font-medium">Importing RFIs to Procore...</p>
           <p className="text-sm text-gray-500 mt-1">
-            {jobStatus.created} created, {jobStatus.replies_added} replies
+            {jobStatus.created > 0 && `${jobStatus.created} created`}
+            {jobStatus.replies_added > 0 && `, ${jobStatus.replies_added} replies`}
+            {jobStatus.responses_added > 0 && `${jobStatus.created > 0 ? ", " : ""}${jobStatus.responses_added} responses added`}
             {jobStatus.errors.length > 0 && `, ${jobStatus.errors.length} errors`}
           </p>
         </div>
@@ -125,8 +138,8 @@ export function RFIReview({
         <p className="text-sm text-gray-700">{summary}</p>
       </div>
 
-      {/* Plan details */}
-      {plan.creates.length > 0 && (
+      {/* Creates table */}
+      {hasCreates && (
         <div>
           <h3 className="text-sm font-medium text-gray-700 mb-2">
             RFIs to Create ({plan.creates.length})
@@ -162,16 +175,57 @@ export function RFIReview({
         </div>
       )}
 
-      {plan.already_exist > 0 && (
+      {/* Response updates table */}
+      {hasResponseUpdates && (
+        <div>
+          <h3 className="text-sm font-medium text-gray-700 mb-2">
+            Responses to Add ({plan.response_updates.length})
+          </h3>
+          <p className="text-xs text-gray-500 mb-2">
+            These RFIs exist in Procore but are missing the government response from RMS.
+          </p>
+          <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr>
+                  <th className="text-left px-3 py-2 text-gray-600">RFI #</th>
+                  <th className="text-left px-3 py-2 text-gray-600">Response Preview</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {plan.response_updates.map((r) => (
+                  <tr key={r.rfi_number} className="hover:bg-gray-50">
+                    <td className="px-3 py-2 font-mono text-xs">{r.rfi_number}</td>
+                    <td className="px-3 py-2 text-gray-700 truncate max-w-xs">
+                      {r.response_body.length > 120
+                        ? r.response_body.slice(0, 120) + "..."
+                        : r.response_body}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {!hasCreates && !hasResponseUpdates && plan.already_exist > 0 && (
         <p className="text-sm text-gray-500">
-          {plan.already_exist} RFI(s) already exist in Procore and will be skipped.
+          {plan.already_exist} RFI(s) already exist in Procore with responses up to date.
+        </p>
+      )}
+
+      {plan.already_exist > 0 && (hasCreates || hasResponseUpdates) && (
+        <p className="text-sm text-gray-500">
+          {plan.already_exist - plan.response_updates.length > 0 &&
+            `${plan.already_exist - plan.response_updates.length} RFI(s) already up to date in Procore.`}
         </p>
       )}
 
       {/* No changes */}
       {!plan.has_changes && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
-          <p className="text-sm text-blue-700 font-medium">All RFIs are already in Procore.</p>
+          <p className="text-sm text-blue-700 font-medium">All RFIs are already in Procore with responses up to date.</p>
           <p className="text-xs text-blue-600 mt-1">Nothing to import.</p>
         </div>
       )}
@@ -180,28 +234,46 @@ export function RFIReview({
       {plan.has_changes && (
         <div className="space-y-3">
           <h3 className="text-sm font-medium text-gray-700">Options</h3>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={applyCreates}
-              onChange={(e) => setApplyCreates(e.target.checked)}
-              className="rounded border-gray-300 text-orange-500 focus:ring-orange-500"
-            />
-            <span className="text-sm text-gray-700">
-              Create {plan.creates.length} new RFI(s)
-            </span>
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={applyReplies}
-              onChange={(e) => setApplyReplies(e.target.checked)}
-              className="rounded border-gray-300 text-orange-500 focus:ring-orange-500"
-            />
-            <span className="text-sm text-gray-700">
-              Add government responses as replies
-            </span>
-          </label>
+          {hasCreates && (
+            <>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={applyCreates}
+                  onChange={(e) => setApplyCreates(e.target.checked)}
+                  className="rounded border-gray-300 text-orange-500 focus:ring-orange-500"
+                />
+                <span className="text-sm text-gray-700">
+                  Create {plan.creates.length} new RFI(s)
+                </span>
+              </label>
+              <label className="flex items-center gap-2 ml-6">
+                <input
+                  type="checkbox"
+                  checked={applyReplies}
+                  onChange={(e) => setApplyReplies(e.target.checked)}
+                  disabled={!applyCreates}
+                  className="rounded border-gray-300 text-orange-500 focus:ring-orange-500"
+                />
+                <span className={`text-sm ${applyCreates ? "text-gray-700" : "text-gray-400"}`}>
+                  Add government responses to new RFIs
+                </span>
+              </label>
+            </>
+          )}
+          {hasResponseUpdates && (
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={applyResponseUpdates}
+                onChange={(e) => setApplyResponseUpdates(e.target.checked)}
+                className="rounded border-gray-300 text-orange-500 focus:ring-orange-500"
+              />
+              <span className="text-sm text-gray-700">
+                Add {plan.response_updates.length} response(s) to existing RFIs
+              </span>
+            </label>
+          )}
         </div>
       )}
 
@@ -222,7 +294,7 @@ export function RFIReview({
         {plan.has_changes && (
           <button
             onClick={handleExecute}
-            disabled={executing || (!applyCreates && !applyReplies)}
+            disabled={executing || nothingSelected}
             className="flex-1 py-3 px-4 rounded-lg font-medium bg-orange-500 text-white hover:bg-orange-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {executing ? (

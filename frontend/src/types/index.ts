@@ -272,8 +272,17 @@ export interface RFICreateAction {
   is_answered: boolean;
 }
 
+export interface RFIResponseAction {
+  rfi_number: string;
+  number: number;
+  procore_rfi_id: number;
+  response_body: string;
+  date_answered: string | null;
+}
+
 export interface RFISyncPlan {
   creates: RFICreateAction[];
+  response_updates: RFIResponseAction[];
   already_exist: number;
   total_rms: number;
   has_changes: boolean;
@@ -299,6 +308,7 @@ export interface RFIJobStatus {
   total: number;
   created: number;
   replies_added: number;
+  responses_added: number;
   errors: string[];
 }
 

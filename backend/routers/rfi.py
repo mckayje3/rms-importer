@@ -8,7 +8,7 @@ from typing import Optional
 
 from services.rfi_parser import RFIParser
 from services.procore_api import ProcoreAPI, RateLimitError
-from models.rfi import RFIParseResult, RFICreateAction, RFISyncPlan
+from models.rfi import RFIParseResult, RFICreateAction, RFIResponseAction, RFISyncPlan
 from routers.auth import get_token
 from config import get_settings
 from database import file_job_store
@@ -58,6 +58,8 @@ class RFIExecuteRequest(BaseModel):
     company_id: int
     apply_creates: bool = True
     apply_replies: bool = True
+    apply_response_updates: bool = True
+    response_updates: list[dict] = []  # From analyze plan
 
 
 class RFIExecuteResponse(BaseModel):
@@ -78,6 +80,7 @@ class RFIJobStatus(BaseModel):
     total: int
     created: int
     replies_added: int
+    responses_added: int = 0
     errors: list[str]
 
 
@@ -90,6 +93,7 @@ def _job_to_rfi_status(job: dict) -> RFIJobStatus:
         total=job.get("total_files", 0),
         created=summary.get("created", job.get("uploaded_files", 0)),
         replies_added=summary.get("replies_added", 0),
+        responses_added=summary.get("responses_added", 0),
         errors=job.get("errors", []),
     )
 
@@ -208,18 +212,25 @@ async def analyze_rfis(
     except Exception as e:
         logger.warning(f"Failed to check Documents folder for existing files: {e}")
 
-    # Cache for filter-files and upload-files endpoints
+    # Cache for filter-files, upload-files, and execute endpoints
     _rfi_cache[project_id] = {
         "rfi_lookup": rfi_lookup,
         "attached_files": attached_files,
     }
 
     creates = []
+    response_updates = []
     already_exist = 0
+
+    # Collect existing RFIs that have an answered RMS counterpart — we'll
+    # fetch their detail to check whether answers already exist in Procore.
+    need_response_check: list[tuple] = []  # (rms_rfi, procore_rfi)
 
     for rfi in parse_result.rfis:
         if rfi.number in existing_by_number:
             already_exist += 1
+            if rfi.is_answered and rfi.response_body:
+                need_response_check.append((rfi, existing_by_number[rfi.number]))
             continue
 
         creates.append(RFICreateAction(
@@ -234,16 +245,45 @@ async def analyze_rfis(
             is_answered=rfi.is_answered,
         ))
 
-    has_changes = len(creates) > 0
+    # Check existing RFIs for missing responses (requires detail calls)
+    if need_response_check:
+        logger.info(f"Checking {len(need_response_check)} existing RFIs for missing responses")
+        for rms_rfi, procore_rfi in need_response_check:
+            try:
+                detail = await api._get(
+                    f"/rest/v1.0/projects/{project_id}/rfis/{procore_rfi.id}",
+                )
+                questions = detail.get("questions", [])
+                has_answer = any(
+                    bool(q.get("answers"))
+                    for q in questions
+                )
+                if not has_answer:
+                    response_updates.append(RFIResponseAction(
+                        rfi_number=rms_rfi.rfi_number,
+                        number=rms_rfi.number,
+                        procore_rfi_id=procore_rfi.id,
+                        response_body=rms_rfi.response_body,
+                        date_answered=rms_rfi.date_answered,
+                    ))
+                await asyncio.sleep(1)
+            except Exception as e:
+                logger.warning(f"Failed to check RFI {rms_rfi.rfi_number} for answers: {e}")
+
+    has_changes = len(creates) > 0 or len(response_updates) > 0
     parts = []
     if creates:
         parts.append(f"{len(creates)} to create")
-    if already_exist:
-        parts.append(f"{already_exist} already in Procore")
+    if response_updates:
+        parts.append(f"{len(response_updates)} responses to add")
+    up_to_date = already_exist - len(response_updates)
+    if up_to_date > 0:
+        parts.append(f"{up_to_date} up to date")
     summary = f"{parse_result.total_count} RFIs in RMS: {', '.join(parts)}" if parts else "No RFIs to sync"
 
     plan = RFISyncPlan(
         creates=creates,
+        response_updates=response_updates,
         already_exist=already_exist,
         total_rms=parse_result.total_count,
         has_changes=has_changes,
@@ -315,8 +355,10 @@ async def execute_rfi_import(
             detail="Could not determine RFI Manager.",
         )
 
-    # Count how many will actually be created
+    # Count how many will actually be created + response updates
     to_create = sum(1 for rfi in parse_result.rfis if rfi.number not in existing_by_number)
+    response_update_count = len(request.response_updates) if request.apply_response_updates else 0
+    total_operations = to_create + response_update_count
 
     # Create database-backed job (same pattern as submittal sync)
     job_id = str(uuid.uuid4())
@@ -326,7 +368,7 @@ async def execute_rfi_import(
         company_id=str(request.company_id),
         session_id=x_auth_session,
         manifest=[],
-        total_files=to_create,
+        total_files=total_operations,
     )
 
     asyncio.create_task(
@@ -340,6 +382,8 @@ async def execute_rfi_import(
             rfi_manager_id=rfi_manager_id,
             apply_creates=request.apply_creates,
             apply_replies=request.apply_replies,
+            apply_response_updates=request.apply_response_updates,
+            response_updates=request.response_updates,
         )
     )
 
@@ -362,74 +406,122 @@ async def _process_rfi_job(
     rfi_manager_id: int,
     apply_creates: bool,
     apply_replies: bool,
+    apply_response_updates: bool = False,
+    response_updates: list[dict] | None = None,
 ):
-    """Background job to create RFIs in Procore."""
+    """Background job to create RFIs and add responses in Procore."""
     file_job_store.update_progress(job_id, status="running")
 
     api = ProcoreAPI(access_token, company_id=company_id)
     created = 0
     replies_added = 0
+    responses_added = 0
     errors = []
+    completed_ops = 0
 
-    for rfi in parse_result.rfis:
-        if rfi.number in existing_by_number:
-            continue
+    def _update_progress():
+        file_job_store.update_progress(
+            job_id,
+            uploaded_files=completed_ops,
+            result_summary={
+                "created": created,
+                "replies_added": replies_added,
+                "responses_added": responses_added,
+                "errors": len(errors),
+            },
+        )
 
-        if not apply_creates:
-            continue
+    # Phase 1: Create new RFIs
+    if apply_creates:
+        for rfi in parse_result.rfis:
+            if rfi.number in existing_by_number:
+                continue
 
-        try:
-            rfi_data = {
-                "subject": rfi.subject,
-                "number": str(rfi.number),
-                "rfi_manager_id": rfi_manager_id,
-                "assignee_ids": [rfi_manager_id],
-                "question": {"body": rfi.question_body},
-            }
+            try:
+                rfi_data = {
+                    "subject": rfi.subject,
+                    "number": str(rfi.number),
+                    "rfi_manager_id": rfi_manager_id,
+                    "assignee_ids": [rfi_manager_id],
+                    "question": {"body": rfi.question_body},
+                }
 
-            if rfi.date_requested:
-                rfi_data["due_date"] = rfi.date_requested.isoformat()
+                if rfi.date_requested:
+                    rfi_data["due_date"] = rfi.date_requested.isoformat()
 
-            result = await api.create_rfi(project_id, rfi_data)
-            created += 1
-            logger.info(f"Created RFI {rfi.rfi_number} (Procore ID: {result.get('id')})")
+                result = await api.create_rfi(project_id, rfi_data)
+                created += 1
+                completed_ops += 1
+                logger.info(f"Created RFI {rfi.rfi_number} (Procore ID: {result.get('id')})")
+                _update_progress()
 
-            # Update progress after each create
-            file_job_store.update_progress(
-                job_id,
-                uploaded_files=created,
-                result_summary={"created": created, "replies_added": replies_added, "errors": len(errors)},
-            )
+                if apply_replies and rfi.response_body and rfi.is_answered:
+                    try:
+                        rfi_id = result["id"]
+                        await api.create_rfi_reply(project_id, rfi_id, {
+                            "body": rfi.response_body,
+                            "official": True,
+                        })
+                        replies_added += 1
+                        # Close the RFI since it has an official response
+                        await api.update_rfi(project_id, rfi_id, {"status": "closed"})
+                    except Exception as e:
+                        errors.append(f"Reply for {rfi.rfi_number}: {str(e)}")
 
-            if apply_replies and rfi.response_body and rfi.is_answered:
-                try:
-                    rfi_id = result["id"]
-                    await api.create_rfi_reply(project_id, rfi_id, {
-                        "body": rfi.response_body,
-                    })
-                    replies_added += 1
-                except Exception as e:
-                    errors.append(f"Reply for {rfi.rfi_number}: {str(e)}")
+                await asyncio.sleep(2)
 
-            await asyncio.sleep(2)
+            except RateLimitError as e:
+                errors.append(f"Rate limited on {rfi.rfi_number}: {str(e)}")
+                await asyncio.sleep(60)
+            except Exception as e:
+                errors.append(f"Failed to create {rfi.rfi_number}: {str(e)}")
+                logger.error(f"Error creating RFI {rfi.rfi_number}: {e}")
 
-        except RateLimitError as e:
-            errors.append(f"Rate limited on {rfi.rfi_number}: {str(e)}")
-            await asyncio.sleep(60)
-        except Exception as e:
-            errors.append(f"Failed to create {rfi.rfi_number}: {str(e)}")
-            logger.error(f"Error creating RFI {rfi.rfi_number}: {e}")
+    # Phase 2: Add responses to existing RFIs
+    if apply_response_updates and response_updates:
+        for update in response_updates:
+            rfi_number = update.get("rfi_number", "?")
+            procore_rfi_id = update.get("procore_rfi_id")
+            response_body = update.get("response_body")
+
+            if not procore_rfi_id or not response_body:
+                continue
+
+            try:
+                await api.create_rfi_reply(project_id, procore_rfi_id, {
+                    "body": response_body,
+                    "official": True,
+                })
+                # Close the RFI since it now has an official response
+                await api.update_rfi(project_id, procore_rfi_id, {"status": "closed"})
+                responses_added += 1
+                completed_ops += 1
+                logger.info(f"Added response and closed {rfi_number} (Procore ID: {procore_rfi_id})")
+                _update_progress()
+
+                await asyncio.sleep(2)
+            except RateLimitError as e:
+                errors.append(f"Rate limited on response for {rfi_number}: {str(e)}")
+                await asyncio.sleep(60)
+            except Exception as e:
+                errors.append(f"Failed to add response to {rfi_number}: {str(e)}")
+                logger.error(f"Error adding response to {rfi_number}: {e}")
 
     file_job_store.update_progress(
         job_id,
         status="completed",
-        uploaded_files=created,
+        uploaded_files=completed_ops,
         errors=errors,
-        result_summary={"created": created, "replies_added": replies_added, "errors": len(errors)},
+        result_summary={
+            "created": created,
+            "replies_added": replies_added,
+            "responses_added": responses_added,
+            "errors": len(errors),
+        },
     )
     logger.info(
         f"RFI import job {job_id} completed: "
-        f"{created} created, {replies_added} replies, {len(errors)} errors"
+        f"{created} created, {replies_added} replies, {responses_added} responses, {len(errors)} errors"
     )
 
 
