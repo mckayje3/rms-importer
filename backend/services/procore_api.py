@@ -424,17 +424,37 @@ class ProcoreAPI:
         await asyncio.sleep(1)  # Spike limit protection
 
         # Step 3: Create document in project
-        doc_response = await self._post(
-            f"/rest/v1.0/projects/{project_id}/documents",
-            {
-                "document": {
-                    "name": filename,
-                    "upload_uuid": upload_info["uuid"],
-                    "parent_id": folder_id,
+        try:
+            doc_response = await self._post(
+                f"/rest/v1.0/projects/{project_id}/documents",
+                {
+                    "document": {
+                        "name": filename,
+                        "upload_uuid": upload_info["uuid"],
+                        "parent_id": folder_id,
+                    },
                 },
-            },
-        )
-        doc_id = doc_response["id"]
+            )
+            doc_id = doc_response["id"]
+        except Exception as e:
+            # "name has already been taken" — file exists but wasn't in cache
+            if "400" in str(e):
+                logger.info(f"Document '{filename}' already exists (400), searching for it...")
+                docs = await self._get(
+                    f"/rest/v1.0/projects/{project_id}/documents",
+                    params={
+                        "view": "extended",
+                        "filters[document_type]": "file",
+                        "per_page": 50,
+                        "sort": "-updated_at",
+                    },
+                )
+                doc = next((d for d in docs if d.get("name") == filename), None)
+                if doc and doc.get("file", {}).get("current_version", {}).get("prostore_file"):
+                    pid = doc["file"]["current_version"]["prostore_file"]["id"]
+                    self._doc_cache.setdefault(project_id, {})[filename] = pid
+                    return pid
+            raise
 
         await asyncio.sleep(1)  # Spike limit protection
 
