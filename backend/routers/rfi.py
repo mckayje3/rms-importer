@@ -229,8 +229,11 @@ async def analyze_rfis(
     for rfi in parse_result.rfis:
         if rfi.number in existing_by_number:
             already_exist += 1
-            if rfi.is_answered and rfi.response_body:
-                need_response_check.append((rfi, existing_by_number[rfi.number]))
+            procore_rfi = existing_by_number[rfi.number]
+            # Skip closed RFIs — they likely have responses already,
+            # and the API blocks replies on closed RFIs anyway
+            if rfi.is_answered and rfi.response_body and procore_rfi.status != "closed":
+                need_response_check.append((rfi, procore_rfi))
             continue
 
         creates.append(RFICreateAction(
