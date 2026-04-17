@@ -15,7 +15,7 @@ import {
   RFIFileUpload,
 } from "@/components";
 import { FileJobProgress } from "@/components/FileJobProgress";
-import { auth, projects as projectsApi, submittals, sync, setup, health, rfi as rfiApi, debugRfiReply } from "@/lib/api";
+import { auth, projects as projectsApi, submittals, sync, setup, health, rfi as rfiApi } from "@/lib/api";
 import { useEmbeddedContext } from "@/lib/useEmbeddedContext";
 import type {
   AppStep,
@@ -923,26 +923,6 @@ export default function Home() {
                   companyId={company.id}
                   excludeFiles={rfiFiles.filter(f => /^RFI-\d+\s*Response/i.test(f.name)).map(f => f.name)}
                 />
-              </div>
-            )}
-
-            {/* Temporary debug button for 403 investigation */}
-            {selectedTool === "rfis" && project && company && rfiResult && rfiResult.errors.length > 0 && (
-              <div className="max-w-md mx-auto mb-6">
-                <button
-                  onClick={async () => {
-                    try {
-                      // RFI-0001 Procore ID
-                      const result = await debugRfiReply(project!.id, 598134326828811, company!.id);
-                      alert(JSON.stringify(result, null, 2));
-                    } catch (err) {
-                      alert("Debug failed: " + (err instanceof Error ? err.message : String(err)));
-                    }
-                  }}
-                  className="px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
-                >
-                  Debug RFI Reply (RFI-0001)
-                </button>
               </div>
             )}
 

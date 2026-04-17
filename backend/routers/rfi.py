@@ -603,8 +603,6 @@ async def _process_rfi_job(
                                 reply_data["prostore_file_ids"] = prostore_ids
                             await api.create_rfi_reply(project_id, rfi_id, reply_data)
                             replies_added += 1
-                            # Close the RFI since it has an official response
-                            await api.update_rfi(project_id, rfi_id, {"status": "closed"})
                         except Exception as e:
                             errors.append(f"Reply for {rfi.rfi_number}: {str(e)}")
 
@@ -629,10 +627,6 @@ async def _process_rfi_job(
                     continue
 
                 try:
-                    # Reopen closed RFIs before adding reply (Procore blocks replies on closed RFIs)
-                    await api.update_rfi(project_id, procore_rfi_id, {"status": "open"})
-                    await asyncio.sleep(1)
-
                     # Upload response files if available
                     prostore_ids = await _upload_response_files(
                         api, project_id, number, response_file_map, errors
@@ -646,8 +640,6 @@ async def _process_rfi_job(
                         reply_data["prostore_file_ids"] = prostore_ids
 
                     await api.create_rfi_reply(project_id, procore_rfi_id, reply_data)
-                    # Close the RFI since it now has an official response
-                    await api.update_rfi(project_id, procore_rfi_id, {"status": "closed"})
                     responses_added += 1
                     completed_ops += 1
                     logger.info(f"Added response and closed {rfi_number} (Procore ID: {procore_rfi_id})")
