@@ -67,6 +67,10 @@ class ProcoreAPI:
                 response = await request_method(url, **kwargs)
 
                 if response.status_code != 429:
+                    if response.status_code >= 400:
+                        # Include response body in error for debugging
+                        body = response.text[:500]
+                        logger.error(f"{method.upper()} {endpoint} → {response.status_code}: {body}")
                     response.raise_for_status()
                     return response
 
