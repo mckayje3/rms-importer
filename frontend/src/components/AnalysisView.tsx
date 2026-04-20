@@ -50,13 +50,13 @@ export function AnalysisView({
             <div className="flex justify-between">
               <span className="text-sm text-blue-700">Spec Sections</span>
               <span className="font-medium text-blue-900">
-                {rmsSession.parse_result.spec_section_count}
+                {rmsSession.spec_section_count}
               </span>
             </div>
             <div className="flex justify-between">
               <span className="text-sm text-blue-700">Revisions</span>
               <span className="font-medium text-blue-900">
-                {rmsSession.parse_result.revision_count}
+                {rmsSession.revision_count}
               </span>
             </div>
           </div>

@@ -47,8 +47,11 @@ export interface RMSParseResult {
 
 export interface RMSSession {
   session_id: string;
-  parse_result: RMSParseResult;
-  uploaded_at: string;
+  submittal_count: number;
+  spec_section_count: number;
+  revision_count: number;
+  errors: string[];
+  warnings: string[];
 }
 
 export enum ImportMode {

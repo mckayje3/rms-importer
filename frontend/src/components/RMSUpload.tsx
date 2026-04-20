@@ -31,8 +31,8 @@ export function RMSUpload({ onUploadComplete, onBack }: RMSUploadProps) {
         reportFile || undefined,
       );
 
-      if (session.parse_result.errors.length > 0 && session.parse_result.submittal_count === 0) {
-        setError(`Parse failed: ${session.parse_result.errors.join("; ")}`);
+      if (session.errors.length > 0 && session.submittal_count === 0) {
+        setError(`Parse failed: ${session.errors.join("; ")}`);
         return;
       }
 
@@ -85,21 +85,21 @@ export function RMSUpload({ onUploadComplete, onBack }: RMSUploadProps) {
       {parseResult && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-2">
           <p className="text-sm font-medium text-green-800">
-            Parsed {parseResult.parse_result.submittal_count} submittals
+            Parsed {parseResult.submittal_count} submittals
           </p>
           <div className="grid grid-cols-2 gap-2 text-sm">
             <div className="flex justify-between">
               <span className="text-gray-600">Spec Sections</span>
-              <span className="font-medium text-green-700">{parseResult.parse_result.spec_section_count}</span>
+              <span className="font-medium text-green-700">{parseResult.spec_section_count}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-600">Revisions</span>
-              <span className="font-medium text-green-700">{parseResult.parse_result.revision_count}</span>
+              <span className="font-medium text-green-700">{parseResult.revision_count}</span>
             </div>
           </div>
-          {parseResult.parse_result.warnings.length > 0 && (
+          {parseResult.warnings.length > 0 && (
             <div className="text-xs text-yellow-700 mt-2">
-              {parseResult.parse_result.warnings.map((w, i) => <p key={i}>{w}</p>)}
+              {parseResult.warnings.map((w, i) => <p key={i}>{w}</p>)}
             </div>
           )}
         </div>
