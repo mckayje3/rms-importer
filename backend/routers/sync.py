@@ -133,12 +133,18 @@ async def bootstrap_baseline(
     # Fetch existing files from Procore Documents folder
     uploaded_files: dict[str, int] = {}
     try:
+        import re as _re
         from config import get_settings
         settings = get_settings()
         if settings.procore_upload_folder_id:
             filenames = await api.list_folder_files(project_id, settings.procore_upload_folder_id)
-            uploaded_files = {name: 1 for name in filenames}
-            logger.warning(f"Bootstrap: found {len(uploaded_files)} files in upload folder")
+            for name in filenames:
+                # Store both original and cleaned name (strip timestamp prefix from PS uploads)
+                uploaded_files[name] = 1
+                cleaned = _re.sub(r"^\d{8}_\d{6}_", "", name)
+                if cleaned != name:
+                    uploaded_files[cleaned] = 1
+            logger.warning(f"Bootstrap: found {len(filenames)} files in upload folder ({len(uploaded_files)} with cleaned names)")
     except Exception as e:
         logger.warning(f"Bootstrap: failed to list existing files: {e}")
 
