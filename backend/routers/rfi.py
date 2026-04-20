@@ -18,6 +18,9 @@ settings = get_settings()
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# RFI files go to a separate Documents folder from submittals
+RFI_UPLOAD_FOLDER_ID = 598134526073638
+
 # In-memory session storage for parsed RFI data
 _rfi_sessions: dict[str, RFIParseResult] = {}
 
@@ -202,7 +205,7 @@ async def analyze_rfis(
     # the upload folder instead — files there were uploaded by previous runs.
     try:
         existing_docs = await api.list_folder_files(
-            project_id, settings.procore_upload_folder_id
+            project_id, RFI_UPLOAD_FOLDER_ID
         )
         import re
         for name in existing_docs:
@@ -517,7 +520,7 @@ async def _upload_response_files(
 
     for file_path in response_file_map[rfi_number]:
         try:
-            pid = await api.upload_file(project_id, file_path)
+            pid = await api.upload_file(project_id, file_path, upload_folder_id=RFI_UPLOAD_FOLDER_ID)
             prostore_ids.append(pid)
             await asyncio.sleep(2)
         except Exception as e:
@@ -896,7 +899,7 @@ async def _process_rfi_file_job(
         for item in manifest:
             try:
                 prostore_file_id = await api.upload_file(
-                    project_id, item["temp_path"]
+                    project_id, item["temp_path"], upload_folder_id=RFI_UPLOAD_FOLDER_ID
                 )
                 await asyncio.sleep(2)
 
