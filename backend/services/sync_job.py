@@ -15,6 +15,45 @@ logger = logging.getLogger(__name__)
 
 DELAY_BETWEEN_CALLS = 2  # seconds
 
+# LOV entry ID mappings for custom fields (label -> Procore LOV entry ID)
+# These are project-specific; discovered from existing submittal data.
+LOV_ENTRIES = {
+    "qa_code": {
+        "A": 598134327466502,
+        "B": 598134327466503,
+        "C": 598134327466504,
+        "E": 598134327466506,
+        "F": 598134327466507,
+        "G": 598134327466508,
+        "X": 598134327466509,
+    },
+    "qc_code": {
+        "A": 598134327466498,
+    },
+    "info": {
+        "GA": 598134327466511,
+        "FIO": 598134327466512,
+        "S": 598134327466513,
+    },
+}
+
+# Fields that use LOV entries (need ID conversion) vs plain values
+LOV_FIELDS = {"qa_code", "qc_code", "info"}
+
+
+def _convert_lov_value(field_name: str, value):
+    """Convert a string LOV label to its entry ID for Procore API."""
+    if field_name not in LOV_FIELDS or value is None:
+        return value
+    if isinstance(value, int):
+        return value  # Already an ID
+    mapping = LOV_ENTRIES.get(field_name, {})
+    entry_id = mapping.get(str(value).strip())
+    if entry_id:
+        return entry_id
+    logger.warning(f"No LOV entry ID for {field_name}='{value}', skipping field")
+    return None
+
 
 def _get_custom_field(config_data: Optional[dict], field_name: str, default: str) -> str:
     """Get a custom field ID from config or fall back to default."""
@@ -128,16 +167,23 @@ async def process_sync_job(
                     if create.paragraph:
                         submittal_data[PARAGRAPH_FIELD] = create.paragraph
                     if create.info:
-                        submittal_data[INFO_FIELD] = create.info
+                        lov_id = _convert_lov_value("info", create.info)
+                        if lov_id:
+                            submittal_data[INFO_FIELD] = lov_id
                     if create.qa_code:
-                        submittal_data[QA_CODE_FIELD] = create.qa_code
+                        lov_id = _convert_lov_value("qa_code", create.qa_code)
+                        if lov_id:
+                            submittal_data[QA_CODE_FIELD] = lov_id
                     if create.qc_code:
-                        submittal_data[QC_CODE_FIELD] = create.qc_code
+                        lov_id = _convert_lov_value("qc_code", create.qc_code)
+                        if lov_id:
+                            submittal_data[QC_CODE_FIELD] = lov_id
                     if create.government_received:
-                        submittal_data[GOV_RECEIVED_FIELD] = create.government_received
+                        submittal_data[GOV_RECEIVED_FIELD] = f"{create.government_received}T00:00:00Z"
                     if create.government_returned:
-                        submittal_data[GOV_RETURNED_FIELD] = create.government_returned
+                        submittal_data[GOV_RETURNED_FIELD] = f"{create.government_returned}T00:00:00Z"
 
+                    logger.info(f"Job {job_id}: creating {create.key} with payload: {submittal_data}")
                     result = await api.create_submittal(project_id, submittal_data)
                     if result and "id" in result:
                         created_ids[create.key] = result["id"]
@@ -202,8 +248,16 @@ async def process_sync_job(
                             else:
                                 logger.warning(f"No status_id for '{value}' on {update.key}")
                         elif field in CUSTOM_FIELD_MAP:
-                            # Custom fields are top-level on submittal object
-                            update_data[CUSTOM_FIELD_MAP[field]] = value
+                            # LOV fields need entry ID conversion
+                            if field in LOV_FIELDS:
+                                lov_id = _convert_lov_value(field, value)
+                                if lov_id:
+                                    update_data[CUSTOM_FIELD_MAP[field]] = lov_id
+                            elif field in ("government_received", "government_returned"):
+                                if value:
+                                    update_data[CUSTOM_FIELD_MAP[field]] = f"{value}T00:00:00Z"
+                            else:
+                                update_data[CUSTOM_FIELD_MAP[field]] = value
                         else:
                             update_data[field] = value
 
