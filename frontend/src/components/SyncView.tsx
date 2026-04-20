@@ -195,6 +195,27 @@ export function SyncView({
         </div>
       )}
 
+      {/* Refresh file baseline — always available when bootstrap callback exists */}
+      {plan.mode !== "full_migration" && onBootstrap && (
+        <div className="flex items-center gap-3">
+          <button
+            onClick={async () => {
+              setBootstrapping(true);
+              try {
+                await onBootstrap();
+              } finally {
+                setBootstrapping(false);
+              }
+            }}
+            disabled={bootstrapping}
+            className="text-sm text-purple-600 hover:text-purple-800 font-medium disabled:opacity-50"
+          >
+            {bootstrapping ? "Refreshing..." : "Refresh File Baseline"}
+          </button>
+          <span className="text-xs text-gray-400">Rescan Procore for already-uploaded files</span>
+        </div>
+      )}
+
       {/* Sync Plan Summary */}
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
         <h3 className="text-sm font-medium text-blue-800 mb-2">Changes Detected</h3>
