@@ -24,6 +24,10 @@ import type {
   RFIAnalyzeResponse,
   RFIExecuteResponse,
   RFIJobStatus,
+  DailyLogSession,
+  DailyLogAnalyzeResponse,
+  DailyLogExecuteResponse,
+  DailyLogJobStatus,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -603,6 +607,82 @@ export const rfi = {
     }
 
     return lastResult!;
+  },
+};
+
+// Daily Logs endpoints
+export const dailyLogs = {
+  upload: async (
+    equipmentFile?: File,
+    laborFile?: File,
+    narrativeFile?: File,
+  ): Promise<DailyLogSession> => {
+    const authSession = typeof window !== "undefined"
+      ? sessionStorage.getItem("auth_session")
+      : null;
+
+    const formData = new FormData();
+    if (equipmentFile) formData.append("equipment_file", equipmentFile);
+    if (laborFile) formData.append("labor_file", laborFile);
+    if (narrativeFile) formData.append("narrative_file", narrativeFile);
+
+    const response = await fetch(`${API_BASE}/daily-logs/upload`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        ...(authSession ? { "X-Auth-Session": authSession } : {}),
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new APIError(response.status, error);
+    }
+
+    return response.json();
+  },
+
+  analyze: async (
+    projectId: number,
+    sessionId: string,
+    companyId: number
+  ): Promise<DailyLogAnalyzeResponse> => {
+    return fetchAPI(`/daily-logs/projects/${projectId}/analyze`, {
+      method: "POST",
+      body: JSON.stringify({
+        session_id: sessionId,
+        company_id: companyId,
+      }),
+    });
+  },
+
+  execute: async (
+    projectId: number,
+    sessionId: string,
+    companyId: number,
+    options: {
+      equipment: boolean;
+      labor: boolean;
+      narratives: boolean;
+      vendorMap: Record<string, number | null>;
+    }
+  ): Promise<DailyLogExecuteResponse> => {
+    return fetchAPI(`/daily-logs/projects/${projectId}/execute`, {
+      method: "POST",
+      body: JSON.stringify({
+        session_id: sessionId,
+        company_id: companyId,
+        apply_equipment: options.equipment,
+        apply_labor: options.labor,
+        apply_narratives: options.narratives,
+        vendor_map: options.vendorMap,
+      }),
+    });
+  },
+
+  getJobStatus: async (jobId: string): Promise<DailyLogJobStatus> => {
+    return fetchAPI(`/daily-logs/jobs/${jobId}`);
   },
 };
 

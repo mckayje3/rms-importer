@@ -239,7 +239,7 @@ export interface FileUploadResult {
 }
 
 // Tool Selection
-export type ToolType = "submittals" | "rfis";
+export type ToolType = "submittals" | "rfis" | "daily-logs";
 
 // RFI Types
 export interface RMSRFI {
@@ -312,6 +312,50 @@ export interface RFIJobStatus {
   errors: string[];
 }
 
+// Daily Log Types
+export interface DailyLogSession {
+  session_id: string;
+  equipment_count: number;
+  labor_count: number;
+  narrative_count: number;
+  date_count: number;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface DailyLogSyncPlan {
+  equipment_creates: number;
+  labor_creates: number;
+  narrative_creates: number;
+  already_exist: number;
+  total_creates: number;
+  has_changes: boolean;
+  summary: string;
+  unmatched_vendors: string[];
+}
+
+export interface DailyLogAnalyzeResponse {
+  plan: DailyLogSyncPlan;
+  summary: string;
+  vendor_map: Record<string, number | null>;
+}
+
+export interface DailyLogExecuteResponse {
+  status: string;
+  job_id: string | null;
+}
+
+export interface DailyLogJobStatus {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  total: number;
+  completed: number;
+  equipment_created: number;
+  labor_created: number;
+  narratives_created: number;
+  errors: string[];
+}
+
 // App State
 export type AppStep =
   | "auth"
@@ -325,6 +369,8 @@ export type AppStep =
   | "import"
   | "rfi-upload"
   | "rfi-review"
+  | "daily-logs-upload"
+  | "daily-logs-review"
   | "complete";
 
 export interface AppState {

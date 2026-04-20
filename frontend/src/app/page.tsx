@@ -13,9 +13,11 @@ import {
   RFIUpload,
   RFIReview,
   RFIFileUpload,
+  DailyLogUpload,
+  DailyLogReview,
 } from "@/components";
 import { FileJobProgress } from "@/components/FileJobProgress";
-import { auth, projects as projectsApi, submittals, sync, setup, health, rfi as rfiApi } from "@/lib/api";
+import { auth, projects as projectsApi, submittals, sync, setup, health, rfi as rfiApi, dailyLogs as dailyLogsApi } from "@/lib/api";
 import { useEmbeddedContext } from "@/lib/useEmbeddedContext";
 import type {
   AppStep,
@@ -32,6 +34,8 @@ import type {
   FileJobStatus,
   RFISession,
   RFIAnalyzeResponse,
+  DailyLogSession,
+  DailyLogAnalyzeResponse,
 } from "@/types";
 
 export default function Home() {
@@ -62,6 +66,9 @@ export default function Home() {
   const [rfiAnalysis, setRfiAnalysis] = useState<RFIAnalyzeResponse | null>(null);
   const [rfiResult, setRfiResult] = useState<{ created: number; replies: number; responsesAdded: number; errors: string[] } | null>(null);
   const [rfiFiles, setRfiFiles] = useState<File[]>([]);
+  const [dailyLogSession, setDailyLogSession] = useState<DailyLogSession | null>(null);
+  const [dailyLogAnalysis, setDailyLogAnalysis] = useState<DailyLogAnalyzeResponse | null>(null);
+  const [dailyLogResult, setDailyLogResult] = useState<{ equipment: number; labor: number; narratives: number; errors: string[] } | null>(null);
 
   // Check authentication on mount
   useEffect(() => {
@@ -342,6 +349,8 @@ export default function Home() {
       setStep("upload-rms");
     } else if (tool === "rfis") {
       setStep("rfi-upload");
+    } else if (tool === "daily-logs") {
+      setStep("daily-logs-upload");
     }
   };
 
@@ -362,6 +371,23 @@ export default function Home() {
       console.error(err);
       // Reset back to upload so user isn't stuck on spinner
       setStep("rfi-upload");
+    }
+  };
+
+  const handleDailyLogUpload = async (session: DailyLogSession) => {
+    setDailyLogSession(session);
+    if (!project || !company) return;
+
+    setDailyLogAnalysis(null);
+    setStep("daily-logs-review");
+
+    try {
+      const analysis = await dailyLogsApi.analyze(project.id, session.session_id, company.id);
+      setDailyLogAnalysis(analysis);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to analyze daily logs");
+      console.error(err);
+      setStep("daily-logs-upload");
     }
   };
 
@@ -725,6 +751,58 @@ export default function Home() {
           </div>
         );
 
+      case "daily-logs-upload":
+        return (
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">
+              Upload Daily Log Reports
+            </h2>
+            <p className="text-gray-600 mb-6">
+              Upload QC daily log CSV exports from RMS. Select at least one file.
+            </p>
+            <DailyLogUpload
+              onUploadComplete={handleDailyLogUpload}
+              onBack={() => {
+                setSelectedTool(null);
+                setStep("select-tool");
+              }}
+            />
+          </div>
+        );
+
+      case "daily-logs-review":
+        if (!dailyLogAnalysis || !dailyLogSession) {
+          return (
+            <div className="flex items-center justify-center py-12">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto mb-4"></div>
+                <p className="text-gray-600">Analyzing daily logs...</p>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">
+              Daily Log Import Review
+            </h2>
+            <p className="text-gray-600 mb-6">
+              Review daily log entries to be imported into Procore.
+            </p>
+            <DailyLogReview
+              analysis={dailyLogAnalysis}
+              projectId={project!.id}
+              sessionId={dailyLogSession.session_id}
+              companyId={company!.id}
+              onComplete={(result) => {
+                setDailyLogResult(result);
+                setStep("complete");
+              }}
+              onCancel={() => setStep("daily-logs-upload")}
+            />
+          </div>
+        );
+
       case "complete":
         return (
           <div className="text-center py-12">
@@ -751,7 +829,9 @@ export default function Home() {
                 ? "Your sync is running in the background. You can navigate away safely."
                 : rfiResult
                   ? "Your RFIs have been imported to Procore."
-                  : "Your RMS data has been imported to Procore."}
+                  : dailyLogResult
+                    ? "Your daily logs have been imported to Procore."
+                    : "Your RMS data has been imported to Procore."}
             </p>
 
             {/* Static result panel — only shown for synchronous completions
@@ -926,6 +1006,46 @@ export default function Home() {
               </div>
             )}
 
+            {dailyLogResult && (
+              <div className="bg-gray-50 rounded-lg p-6 max-w-sm mx-auto mb-6">
+                <div className="space-y-3">
+                  {dailyLogResult.equipment > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Equipment Entries</span>
+                      <span className="font-medium text-blue-600">{dailyLogResult.equipment}</span>
+                    </div>
+                  )}
+                  {dailyLogResult.labor > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Labor Entries</span>
+                      <span className="font-medium text-green-600">{dailyLogResult.labor}</span>
+                    </div>
+                  )}
+                  {dailyLogResult.narratives > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Narrative Entries</span>
+                      <span className="font-medium text-purple-600">{dailyLogResult.narratives}</span>
+                    </div>
+                  )}
+                  {dailyLogResult.equipment === 0 && dailyLogResult.labor === 0 && dailyLogResult.narratives === 0 && dailyLogResult.errors.length === 0 && (
+                    <p className="text-sm text-gray-500 text-center">No changes made.</p>
+                  )}
+                  {dailyLogResult.errors.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-gray-200">
+                      <p className="text-sm font-medium text-red-600 mb-1">
+                        {dailyLogResult.errors.length} error(s)
+                      </p>
+                      <ul className="text-xs text-red-500 space-y-1">
+                        {dailyLogResult.errors.slice(0, 5).map((e, i) => (
+                          <li key={i}>{e}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {importResult && !syncResult && !rfiResult && (
               <div className="bg-gray-50 rounded-lg p-6 max-w-sm mx-auto mb-6">
                 <div className="space-y-3">
@@ -968,6 +1088,9 @@ export default function Home() {
                 setRfiAnalysis(null);
                 setRfiResult(null);
                 setRfiFiles([]);
+                setDailyLogSession(null);
+                setDailyLogAnalysis(null);
+                setDailyLogResult(null);
               }}
               className="bg-orange-500 text-white px-8 py-3 rounded-lg font-medium hover:bg-orange-600 transition-colors"
             >

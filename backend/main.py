@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
-from routers import auth, projects, submittals, rms_upload, health, qaqc, sync, setup, rfi
+from routers import auth, projects, submittals, rms_upload, health, qaqc, sync, setup, rfi, daily_logs
 
 settings = get_settings()
 
@@ -37,6 +37,7 @@ app.include_router(qaqc.router, prefix="/qaqc", tags=["QAQC Deficiencies"])
 app.include_router(sync.router, prefix="/sync", tags=["Sync"])
 app.include_router(setup.router, prefix="/setup", tags=["Setup"])
 app.include_router(rfi.router, prefix="/rfi", tags=["RFI"])
+app.include_router(daily_logs.router, prefix="/daily-logs", tags=["Daily Logs"])
 
 
 @app.get("/")

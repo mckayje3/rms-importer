@@ -816,3 +816,56 @@ class ProcoreAPI:
             f"/rest/v1.0/projects/{project_id}/rfis/{rfi_id}/replies",
             {"reply": reply_data},
         )
+
+    # === Daily Log Methods ===
+
+    async def get_manpower_logs(self, project_id: int, log_date: str | None = None) -> list[dict]:
+        """Get manpower log entries, optionally filtered by date (YYYY-MM-DD)."""
+        params = {"per_page": 300}
+        if log_date:
+            params["log_date"] = log_date
+        return await self._get(
+            f"/rest/v1.0/projects/{project_id}/manpower_logs",
+            params=params,
+        )
+
+    async def create_manpower_log(self, project_id: int, data: dict) -> dict:
+        """Create a manpower log entry."""
+        return await self._post(
+            f"/rest/v1.0/projects/{project_id}/manpower_logs",
+            {"manpower_log": data},
+        )
+
+    async def get_equipment_logs(self, project_id: int, log_date: str | None = None) -> list[dict]:
+        """Get equipment log entries, optionally filtered by date (YYYY-MM-DD)."""
+        params = {"per_page": 300}
+        if log_date:
+            params["log_date"] = log_date
+        return await self._get(
+            f"/rest/v1.0/projects/{project_id}/equipment_logs",
+            params=params,
+        )
+
+    async def create_equipment_log(self, project_id: int, data: dict) -> dict:
+        """Create an equipment log entry."""
+        return await self._post(
+            f"/rest/v1.0/projects/{project_id}/equipment_logs",
+            {"equipment_log": data},
+        )
+
+    async def get_notes_logs(self, project_id: int, log_date: str | None = None) -> list[dict]:
+        """Get notes log entries, optionally filtered by date (YYYY-MM-DD)."""
+        params = {"per_page": 300}
+        if log_date:
+            params["log_date"] = log_date
+        return await self._get(
+            f"/rest/v1.0/projects/{project_id}/notes_logs",
+            params=params,
+        )
+
+    async def create_notes_log(self, project_id: int, data: dict) -> dict:
+        """Create a notes log entry."""
+        return await self._post(
+            f"/rest/v1.0/projects/{project_id}/notes_logs",
+            {"notes_log": data},
+        )
