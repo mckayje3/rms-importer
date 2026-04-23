@@ -242,7 +242,7 @@ export interface FileUploadResult {
 }
 
 // Tool Selection
-export type ToolType = "submittals" | "rfis" | "daily-logs";
+export type ToolType = "submittals" | "rfis" | "daily-logs" | "observations";
 
 // RFI Types
 export interface RMSRFI {
@@ -359,6 +359,56 @@ export interface DailyLogJobStatus {
   errors: string[];
 }
 
+// Observations Types
+export interface ObservationsSession {
+  session_id: string;
+  total_count: number;
+  open_count: number;
+  closed_count: number;
+  locations: string[];
+  project_name: string | null;
+  report_date: string | null;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface ObservationType {
+  id: number;
+  name: string;
+  category: string | null;
+}
+
+export interface ObservationSyncPlan {
+  creates: number;
+  already_exist: number;
+  total_rms: number;
+  has_changes: boolean;
+  summary: string;
+  locations_to_create: string[];
+  observation_types: ObservationType[];
+}
+
+export interface ObservationsAnalyzeResponse {
+  plan: ObservationSyncPlan;
+  summary: string;
+  location_map: Record<string, number | null>;
+}
+
+export interface ObservationsExecuteResponse {
+  status: string;
+  job_id: string | null;
+}
+
+export interface ObservationsJobStatus {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  total: number;
+  completed: number;
+  observations_created: number;
+  locations_created: number;
+  errors: string[];
+}
+
 // App State
 export type AppStep =
   | "auth"
@@ -374,6 +424,8 @@ export type AppStep =
   | "rfi-review"
   | "daily-logs-upload"
   | "daily-logs-review"
+  | "observations-upload"
+  | "observations-review"
   | "complete";
 
 export interface AppState {

@@ -27,6 +27,12 @@ const DAILY_LOG_STEPS: { key: AppStep; label: string }[] = [
   { key: "import", label: "Import" },
 ];
 
+const OBSERVATIONS_STEPS: { key: AppStep; label: string }[] = [
+  { key: "observations-upload", label: "Upload" },
+  { key: "observations-review", label: "Review" },
+  { key: "import", label: "Import" },
+];
+
 interface StepIndicatorProps {
   currentStep: AppStep;
   isEmbedded?: boolean;
@@ -40,6 +46,8 @@ export function StepIndicator({ currentStep, isEmbedded = false, selectedTool = 
     effectiveStep = "review";
   } else if (currentStep === "daily-logs-review") {
     effectiveStep = "daily-logs-review";
+  } else if (currentStep === "observations-review") {
+    effectiveStep = "observations-review";
   } else if (currentStep === "complete") {
     effectiveStep = "import";
   }
@@ -50,6 +58,8 @@ export function StepIndicator({ currentStep, isEmbedded = false, selectedTool = 
     toolSteps = RFI_STEPS;
   } else if (selectedTool === "daily-logs") {
     toolSteps = DAILY_LOG_STEPS;
+  } else if (selectedTool === "observations") {
+    toolSteps = OBSERVATIONS_STEPS;
   }
 
   const allSteps = [...COMMON_STEPS, ...toolSteps];

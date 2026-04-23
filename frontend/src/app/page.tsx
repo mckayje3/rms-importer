@@ -15,9 +15,11 @@ import {
   RFIFileUpload,
   DailyLogUpload,
   DailyLogReview,
+  ObservationsUpload,
+  ObservationsReview,
 } from "@/components";
 import { FileJobProgress } from "@/components/FileJobProgress";
-import { auth, projects as projectsApi, submittals, sync, setup, health, rfi as rfiApi, dailyLogs as dailyLogsApi } from "@/lib/api";
+import { auth, projects as projectsApi, submittals, sync, setup, health, rfi as rfiApi, dailyLogs as dailyLogsApi, observations as observationsApi } from "@/lib/api";
 import { useEmbeddedContext } from "@/lib/useEmbeddedContext";
 import type {
   AppStep,
@@ -36,6 +38,8 @@ import type {
   RFIAnalyzeResponse,
   DailyLogSession,
   DailyLogAnalyzeResponse,
+  ObservationsSession,
+  ObservationsAnalyzeResponse,
 } from "@/types";
 
 export default function Home() {
@@ -69,6 +73,9 @@ export default function Home() {
   const [dailyLogSession, setDailyLogSession] = useState<DailyLogSession | null>(null);
   const [dailyLogAnalysis, setDailyLogAnalysis] = useState<DailyLogAnalyzeResponse | null>(null);
   const [dailyLogResult, setDailyLogResult] = useState<{ equipment: number; labor: number; narratives: number; errors: string[] } | null>(null);
+  const [observationsSession, setObservationsSession] = useState<ObservationsSession | null>(null);
+  const [observationsAnalysis, setObservationsAnalysis] = useState<ObservationsAnalyzeResponse | null>(null);
+  const [observationsResult, setObservationsResult] = useState<{ observations_created: number; locations_created: number; errors: string[] } | null>(null);
 
   // Check authentication on mount
   useEffect(() => {
@@ -351,6 +358,8 @@ export default function Home() {
       setStep("rfi-upload");
     } else if (tool === "daily-logs") {
       setStep("daily-logs-upload");
+    } else if (tool === "observations") {
+      setStep("observations-upload");
     }
   };
 
@@ -388,6 +397,23 @@ export default function Home() {
       setError(err instanceof Error ? err.message : "Failed to analyze daily logs");
       console.error(err);
       setStep("daily-logs-upload");
+    }
+  };
+
+  const handleObservationsUpload = async (session: ObservationsSession) => {
+    setObservationsSession(session);
+    if (!project || !company) return;
+
+    setObservationsAnalysis(null);
+    setStep("observations-review");
+
+    try {
+      const analysis = await observationsApi.analyze(project.id, session.session_id, company.id);
+      setObservationsAnalysis(analysis);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to analyze deficiencies");
+      console.error(err);
+      setStep("observations-upload");
     }
   };
 
@@ -803,6 +829,58 @@ export default function Home() {
           </div>
         );
 
+      case "observations-upload":
+        return (
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">
+              Upload Deficiency Items
+            </h2>
+            <p className="text-gray-600 mb-6">
+              Upload the QAQC Deficiency Items CSV export from RMS.
+            </p>
+            <ObservationsUpload
+              onUploadComplete={handleObservationsUpload}
+              onBack={() => {
+                setSelectedTool(null);
+                setStep("select-tool");
+              }}
+            />
+          </div>
+        );
+
+      case "observations-review":
+        if (!observationsAnalysis || !observationsSession) {
+          return (
+            <div className="flex items-center justify-center py-12">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto mb-4"></div>
+                <p className="text-gray-600">Analyzing deficiencies...</p>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">
+              Observations Import Review
+            </h2>
+            <p className="text-gray-600 mb-6">
+              Review deficiency items to be imported as Procore Observations.
+            </p>
+            <ObservationsReview
+              analysis={observationsAnalysis}
+              projectId={project!.id}
+              sessionId={observationsSession.session_id}
+              companyId={company!.id}
+              onComplete={(result) => {
+                setObservationsResult(result);
+                setStep("complete");
+              }}
+              onCancel={() => setStep("observations-upload")}
+            />
+          </div>
+        );
+
       case "complete":
         return (
           <div className="text-center py-12">
@@ -831,7 +909,9 @@ export default function Home() {
                   ? "Your RFIs have been imported to Procore."
                   : dailyLogResult
                     ? "Your daily logs have been imported to Procore."
-                    : "Your RMS data has been imported to Procore."}
+                    : observationsResult
+                      ? "Your deficiency items have been imported as Procore Observations."
+                      : "Your RMS data has been imported to Procore."}
             </p>
 
             {/* Static result panel — only shown for synchronous completions
@@ -1046,6 +1126,40 @@ export default function Home() {
               </div>
             )}
 
+            {observationsResult && (
+              <div className="bg-gray-50 rounded-lg p-6 max-w-sm mx-auto mb-6">
+                <div className="space-y-3">
+                  {observationsResult.observations_created > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Observations Created</span>
+                      <span className="font-medium text-green-600">{observationsResult.observations_created}</span>
+                    </div>
+                  )}
+                  {observationsResult.locations_created > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Locations Created</span>
+                      <span className="font-medium text-blue-600">{observationsResult.locations_created}</span>
+                    </div>
+                  )}
+                  {observationsResult.observations_created === 0 && observationsResult.locations_created === 0 && observationsResult.errors.length === 0 && (
+                    <p className="text-sm text-gray-500 text-center">No changes made.</p>
+                  )}
+                  {observationsResult.errors.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-gray-200">
+                      <p className="text-sm font-medium text-red-600 mb-1">
+                        {observationsResult.errors.length} error(s)
+                      </p>
+                      <ul className="text-xs text-red-500 space-y-1">
+                        {observationsResult.errors.slice(0, 5).map((e, i) => (
+                          <li key={i}>{e}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {importResult && !syncResult && !rfiResult && (
               <div className="bg-gray-50 rounded-lg p-6 max-w-sm mx-auto mb-6">
                 <div className="space-y-3">
@@ -1091,6 +1205,9 @@ export default function Home() {
                 setDailyLogSession(null);
                 setDailyLogAnalysis(null);
                 setDailyLogResult(null);
+                setObservationsSession(null);
+                setObservationsAnalysis(null);
+                setObservationsResult(null);
               }}
               className="bg-orange-500 text-white px-8 py-3 rounded-lg font-medium hover:bg-orange-600 transition-colors"
             >

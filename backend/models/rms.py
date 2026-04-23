@@ -1,4 +1,5 @@
 """RMS data models."""
+import re
 from pydantic import BaseModel, computed_field
 from typing import Optional
 from datetime import date
@@ -89,13 +90,16 @@ class RMSDeficiency(BaseModel):
 
     @property
     def procore_status(self) -> str:
-        """Map RMS status to Procore observation status."""
+        """Map RMS status to Procore observation status.
+
+        Procore statuses: initiated, ready_for_review, not_accepted, closed
+        """
         status_lower = self.status.lower()
         if "corrected" in status_lower or "closed" in status_lower:
             return "closed"
         if "verification" in status_lower:
             return "ready_for_review"
-        return "open"
+        return "initiated"
 
 
 class RMSDeficiencyParseResult(BaseModel):
@@ -110,6 +114,56 @@ class RMSDeficiencyParseResult(BaseModel):
     open_count: int
     closed_count: int
     locations: list[str] = []
+
+    # Validation
+    errors: list[str] = []
+    warnings: list[str] = []
+
+
+class RMSTest(BaseModel):
+    """QC Test item from RMS QC Test List report."""
+
+    test_number: str  # e.g., "CT-00001"
+    description: str
+    performed_by: Optional[str] = None  # e.g., "NOVA", "DC Mechanical"
+    location: Optional[str] = None  # e.g., "Building Pad", "Footings"
+    status: str  # "Completed" or "Outstanding"
+
+    @property
+    def is_complete(self) -> bool:
+        """Check if this test is completed."""
+        return self.status.lower() == "completed"
+
+    @property
+    def spec_section(self) -> Optional[str]:
+        """Extract spec section from description if present."""
+        match = re.search(r"Specification Section:\s*([\d\s]+)", self.description)
+        if match:
+            return match.group(1).strip()
+        return None
+
+    @property
+    def paragraph(self) -> Optional[str]:
+        """Extract paragraph reference from description if present."""
+        match = re.search(r"Paragraph:\s*([\w\d\s.\-]+?)(?:\s+[A-Z]|$)", self.description)
+        if match:
+            return match.group(1).strip()
+        return None
+
+
+class RMSTestParseResult(BaseModel):
+    """Result of parsing RMS QC Test List report."""
+
+    tests: list[RMSTest]
+    project_name: Optional[str] = None
+    report_date: Optional[date] = None
+
+    # Stats
+    total_count: int
+    completed_count: int
+    outstanding_count: int
+    locations: list[str] = []
+    performers: list[str] = []
 
     # Validation
     errors: list[str] = []

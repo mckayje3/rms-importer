@@ -14,3 +14,5 @@ export { RFIReview } from "./RFIReview";
 export { RFIFileUpload } from "./RFIFileUpload";
 export { DailyLogUpload } from "./DailyLogUpload";
 export { DailyLogReview } from "./DailyLogReview";
+export { ObservationsUpload } from "./ObservationsUpload";
+export { ObservationsReview } from "./ObservationsReview";

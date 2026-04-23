@@ -686,6 +686,74 @@ export const dailyLogs = {
   },
 };
 
+// Observations (QAQC Deficiencies) endpoints
+export const observations = {
+  upload: async (file: File): Promise<import("@/types").ObservationsSession> => {
+    const authSession = typeof window !== "undefined"
+      ? sessionStorage.getItem("auth_session")
+      : null;
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch(`${API_BASE}/qaqc/upload`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        ...(authSession ? { "X-Auth-Session": authSession } : {}),
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new APIError(response.status, error);
+    }
+
+    return response.json();
+  },
+
+  analyze: async (
+    projectId: number,
+    sessionId: string,
+    companyId: number
+  ): Promise<import("@/types").ObservationsAnalyzeResponse> => {
+    return fetchAPI(`/qaqc/projects/${projectId}/analyze`, {
+      method: "POST",
+      body: JSON.stringify({
+        session_id: sessionId,
+        company_id: companyId,
+      }),
+    });
+  },
+
+  execute: async (
+    projectId: number,
+    sessionId: string,
+    companyId: number,
+    options: {
+      observationTypeId: number | null;
+      createLocations: boolean;
+      locationMap: Record<string, number | null>;
+    }
+  ): Promise<import("@/types").ObservationsExecuteResponse> => {
+    return fetchAPI(`/qaqc/projects/${projectId}/execute`, {
+      method: "POST",
+      body: JSON.stringify({
+        session_id: sessionId,
+        company_id: companyId,
+        observation_type_id: options.observationTypeId,
+        create_locations: options.createLocations,
+        location_map: options.locationMap,
+      }),
+    });
+  },
+
+  getJobStatus: async (jobId: string): Promise<import("@/types").ObservationsJobStatus> => {
+    return fetchAPI(`/qaqc/jobs/${jobId}`);
+  },
+};
+
 // Health check
 export const health = async (): Promise<{ status: string }> => {
   return fetchAPI("/health");

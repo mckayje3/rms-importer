@@ -692,19 +692,21 @@ class ProcoreAPI:
             project_id: Procore project ID
             observation_data: Observation fields including:
                 - name: Title (required)
+                - type_id: Observation type ID (required)
                 - description: Detailed description
-                - status: open, ready_for_review, not_accepted, closed
-                - priority: low, medium, high
-                - type_id: Observation type ID
+                - status: initiated, ready_for_review, not_accepted, closed
+                - priority: Low, Medium, High, Urgent
                 - location_id: Location ID
                 - assignee_id: User/vendor ID
+                - due_date: YYYY-MM-DD
+                - personal: bool
 
         Returns:
             Created observation data
         """
         return await self._post(
-            f"/rest/v1.0/projects/{project_id}/observations/items",
-            {"observation_item": observation_data},
+            f"/rest/v1.0/observations/items",
+            {"project_id": project_id, "observation": observation_data},
         )
 
     async def update_observation(
