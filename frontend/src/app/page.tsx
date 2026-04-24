@@ -42,6 +42,21 @@ import type {
   ObservationsAnalyzeResponse,
 } from "@/types";
 
+// Backend writes timestamps as naive UTC (datetime.utcnow().isoformat()) — no
+// trailing Z, so JS would otherwise parse them as local time.
+function formatRelativeTime(iso: string | null): string {
+  if (!iso) return "";
+  const withTz = /Z$|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + "Z";
+  const then = new Date(withTz);
+  if (isNaN(then.getTime())) return "";
+  const diffSec = Math.max(0, Math.floor((Date.now() - then.getTime()) / 1000));
+  if (diffSec < 60) return "just now";
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+  if (diffSec < 604800) return `${Math.floor(diffSec / 86400)}d ago`;
+  return then.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 export default function Home() {
   const embedded = useEmbeddedContext();
   const [step, setStep] = useState<AppStep>("auth");
@@ -918,7 +933,21 @@ export default function Home() {
                 (no background job). When update_job_id is set, FileJobProgress
                 below shows the live state instead. */}
             {syncResult && !syncResult.update_job_id && (
-              <div className="bg-gray-50 rounded-lg p-6 max-w-sm mx-auto mb-6">
+              <div className="max-w-md mx-auto mb-6 text-left space-y-4">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <h3 className="text-sm font-medium text-blue-800 mb-2">Changes Applied</h3>
+                  <p className="text-blue-700 text-sm">
+                    {(() => {
+                      const parts: string[] = [];
+                      if (syncResult.created > 0) parts.push(`${syncResult.created} created`);
+                      if (syncResult.updated > 0) parts.push(`${syncResult.updated} updated`);
+                      if (syncResult.files_uploaded > 0) parts.push(`${syncResult.files_uploaded} file${syncResult.files_uploaded !== 1 ? "s" : ""} uploaded`);
+                      if (syncResult.flagged > 0) parts.push(`${syncResult.flagged} flagged for review`);
+                      return parts.length ? parts.join(", ") + "." : "No changes applied.";
+                    })()}
+                  </p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-6">
                 <div className="space-y-3">
                   <div className="flex justify-between">
                     <span className="text-gray-600">Status</span>
@@ -965,6 +994,7 @@ export default function Home() {
                   {syncResult.baseline_updated && (
                     <p className="text-xs text-gray-500 mt-2">Baseline updated for next sync.</p>
                   )}
+                </div>
                 </div>
               </div>
             )}
@@ -1018,6 +1048,9 @@ export default function Home() {
                         : job.status === "failed" ? "text-red-600"
                         : job.status === "running" || job.status === "queued" ? "text-blue-600"
                         : "text-gray-600";
+                      const timestamp = formatRelativeTime(
+                        job.completed_at ?? job.started_at ?? job.created_at
+                      );
                       return (
                         <li key={job.id} className="flex justify-between gap-2">
                           <span className="text-gray-700">
@@ -1027,7 +1060,12 @@ export default function Home() {
                               <span className="text-red-500"> ({summary.errors} errors)</span>
                             )}
                           </span>
-                          <span className={`font-medium ${statusColor}`}>{job.status}</span>
+                          <span className="flex flex-col items-end shrink-0">
+                            <span className={`font-medium ${statusColor}`}>{job.status}</span>
+                            {timestamp && (
+                              <span className="text-gray-400 text-[10px]">{timestamp}</span>
+                            )}
+                          </span>
                         </li>
                       );
                     })}
@@ -1037,7 +1075,19 @@ export default function Home() {
             )}
 
             {rfiResult && (
-              <div className="bg-gray-50 rounded-lg p-6 max-w-sm mx-auto mb-6">
+              <div className="max-w-md mx-auto mb-6 text-left space-y-4">
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="text-sm text-gray-700">
+                    {(() => {
+                      const parts: string[] = [];
+                      if (rfiResult.created > 0) parts.push(`${rfiResult.created} created`);
+                      if (rfiResult.replies > 0) parts.push(`${rfiResult.replies} ${rfiResult.replies === 1 ? "reply" : "replies"} added`);
+                      if (rfiResult.responsesAdded > 0) parts.push(`${rfiResult.responsesAdded} response${rfiResult.responsesAdded !== 1 ? "s" : ""} added`);
+                      return parts.length ? parts.join(", ") + "." : "No changes applied.";
+                    })()}
+                  </p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-6">
                 <div className="space-y-3">
                   {rfiResult.created > 0 && (
                     <div className="flex justify-between">
@@ -1073,6 +1123,7 @@ export default function Home() {
                     </div>
                   )}
                 </div>
+                </div>
               </div>
             )}
 
@@ -1087,76 +1138,97 @@ export default function Home() {
             )}
 
             {dailyLogResult && (
-              <div className="bg-gray-50 rounded-lg p-6 max-w-sm mx-auto mb-6">
-                <div className="space-y-3">
-                  {dailyLogResult.equipment > 0 && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Equipment Entries</span>
-                      <span className="font-medium text-blue-600">{dailyLogResult.equipment}</span>
-                    </div>
-                  )}
-                  {dailyLogResult.labor > 0 && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Labor Entries</span>
-                      <span className="font-medium text-green-600">{dailyLogResult.labor}</span>
-                    </div>
-                  )}
-                  {dailyLogResult.narratives > 0 && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Narrative Entries</span>
-                      <span className="font-medium text-purple-600">{dailyLogResult.narratives}</span>
-                    </div>
-                  )}
-                  {dailyLogResult.equipment === 0 && dailyLogResult.labor === 0 && dailyLogResult.narratives === 0 && dailyLogResult.errors.length === 0 && (
-                    <p className="text-sm text-gray-500 text-center">No changes made.</p>
-                  )}
-                  {dailyLogResult.errors.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-gray-200">
-                      <p className="text-sm font-medium text-red-600 mb-1">
-                        {dailyLogResult.errors.length} error(s)
-                      </p>
-                      <ul className="text-xs text-red-500 space-y-1">
-                        {dailyLogResult.errors.slice(0, 5).map((e, i) => (
-                          <li key={i}>{e}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
+              <div className="max-w-md mx-auto mb-6 text-left space-y-4">
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="text-sm text-gray-700">
+                    {(() => {
+                      const total = dailyLogResult.equipment + dailyLogResult.labor + dailyLogResult.narratives;
+                      return total > 0
+                        ? `Imported ${total} log entr${total !== 1 ? "ies" : "y"} to Procore.`
+                        : "No log entries imported.";
+                    })()}
+                  </p>
                 </div>
+                {(dailyLogResult.equipment > 0 || dailyLogResult.labor > 0 || dailyLogResult.narratives > 0) && (
+                  <div className="grid grid-cols-3 gap-4">
+                    {dailyLogResult.equipment > 0 && (
+                      <div className="bg-blue-50 rounded-lg p-3 text-center">
+                        <p className="text-2xl font-bold text-blue-600">{dailyLogResult.equipment}</p>
+                        <p className="text-xs text-blue-500">Equipment</p>
+                      </div>
+                    )}
+                    {dailyLogResult.labor > 0 && (
+                      <div className="bg-green-50 rounded-lg p-3 text-center">
+                        <p className="text-2xl font-bold text-green-600">{dailyLogResult.labor}</p>
+                        <p className="text-xs text-green-500">Labor</p>
+                      </div>
+                    )}
+                    {dailyLogResult.narratives > 0 && (
+                      <div className="bg-purple-50 rounded-lg p-3 text-center">
+                        <p className="text-2xl font-bold text-purple-600">{dailyLogResult.narratives}</p>
+                        <p className="text-xs text-purple-500">Narratives</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {dailyLogResult.errors.length > 0 && (
+                  <div className="bg-gray-50 rounded-lg p-4">
+                    <p className="text-sm font-medium text-red-600 mb-1">
+                      {dailyLogResult.errors.length} error(s)
+                    </p>
+                    <ul className="text-xs text-red-500 space-y-1">
+                      {dailyLogResult.errors.slice(0, 5).map((e, i) => (
+                        <li key={i}>{e}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             )}
 
             {observationsResult && (
-              <div className="bg-gray-50 rounded-lg p-6 max-w-sm mx-auto mb-6">
-                <div className="space-y-3">
-                  {observationsResult.observations_created > 0 && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Observations Created</span>
-                      <span className="font-medium text-green-600">{observationsResult.observations_created}</span>
-                    </div>
-                  )}
-                  {observationsResult.locations_created > 0 && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Locations Created</span>
-                      <span className="font-medium text-blue-600">{observationsResult.locations_created}</span>
-                    </div>
-                  )}
-                  {observationsResult.observations_created === 0 && observationsResult.locations_created === 0 && observationsResult.errors.length === 0 && (
-                    <p className="text-sm text-gray-500 text-center">No changes made.</p>
-                  )}
-                  {observationsResult.errors.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-gray-200">
-                      <p className="text-sm font-medium text-red-600 mb-1">
-                        {observationsResult.errors.length} error(s)
-                      </p>
-                      <ul className="text-xs text-red-500 space-y-1">
-                        {observationsResult.errors.slice(0, 5).map((e, i) => (
-                          <li key={i}>{e}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
+              <div className="max-w-md mx-auto mb-6 text-left space-y-4">
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="text-sm text-gray-700">
+                    {(() => {
+                      const obs = observationsResult.observations_created;
+                      const locs = observationsResult.locations_created;
+                      if (obs === 0 && locs === 0) return "No observations created.";
+                      const obsPart = obs > 0 ? `${obs} observation${obs !== 1 ? "s" : ""}` : "";
+                      const locPart = locs > 0 ? `${locs} location${locs !== 1 ? "s" : ""}` : "";
+                      const both = obsPart && locPart ? `${obsPart} and ${locPart}` : obsPart || locPart;
+                      return `Created ${both} in Procore.`;
+                    })()}
+                  </p>
                 </div>
+                {(observationsResult.observations_created > 0 || observationsResult.locations_created > 0) && (
+                  <div className="grid grid-cols-2 gap-4">
+                    {observationsResult.observations_created > 0 && (
+                      <div className="bg-blue-50 rounded-lg p-3 text-center">
+                        <p className="text-2xl font-bold text-blue-600">{observationsResult.observations_created}</p>
+                        <p className="text-xs text-blue-500">Observations</p>
+                      </div>
+                    )}
+                    {observationsResult.locations_created > 0 && (
+                      <div className="bg-green-50 rounded-lg p-3 text-center">
+                        <p className="text-2xl font-bold text-green-600">{observationsResult.locations_created}</p>
+                        <p className="text-xs text-green-500">Locations</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {observationsResult.errors.length > 0 && (
+                  <div className="bg-gray-50 rounded-lg p-4">
+                    <p className="text-sm font-medium text-red-600 mb-1">
+                      {observationsResult.errors.length} error(s)
+                    </p>
+                    <ul className="text-xs text-red-500 space-y-1">
+                      {observationsResult.errors.slice(0, 5).map((e, i) => (
+                        <li key={i}>{e}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             )}
 
