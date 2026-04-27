@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { rfi as rfiApi } from "@/lib/api";
-import { RFIFileUpload } from "./RFIFileUpload";
 import type { RFISyncPlan, RFIJobStatus } from "@/types";
 
 interface RFIReviewProps {
@@ -69,8 +68,12 @@ export function RFIReview({
     };
   }, [jobId]);
 
-  // Response files from the folder picker (RFI-XXXX Response*)
+  // Split picked files for the preview banner. The unified job handles both
+  // categories — this is just so the user can see what's going where.
   const responseFiles = rfiFiles.filter(f => /^RFI-\d+\s*Response/i.test(f.name));
+  const otherRfiFiles = rfiFiles.filter(
+    f => /^RFI-\d+/i.test(f.name) && !/^RFI-\d+\s*Response/i.test(f.name)
+  );
 
   const handleExecute = async () => {
     setExecuting(true);
@@ -84,9 +87,10 @@ export function RFIReview({
         responseUpdateItems: applyResponseUpdates ? plan.response_updates : [],
       };
 
-      // Use multipart endpoint when we have response files to attach
-      const result = responseFiles.length > 0
-        ? await rfiApi.executeWithFiles(projectId, sessionId, companyId, options, responseFiles)
+      // Always go through the unified endpoint when files are picked, so
+      // creates, replies, and file attaches happen as one ordered job.
+      const result = rfiFiles.length > 0
+        ? await rfiApi.executeWithFiles(projectId, sessionId, companyId, options, rfiFiles)
         : await rfiApi.execute(projectId, sessionId, companyId, options);
 
       if (result.job_id) {
@@ -287,13 +291,21 @@ export function RFIReview({
         </div>
       )}
 
-      {/* Response file info */}
-      {responseFiles.length > 0 && (applyReplies || applyResponseUpdates) && (
-        <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
-          <p className="text-sm text-purple-700">
-            {responseFiles.length} response file{responseFiles.length !== 1 ? "s" : ""} will
-            be attached to replies.
-          </p>
+      {/* File plan summary */}
+      {rfiFiles.length > 0 && (
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 space-y-1">
+          {responseFiles.length > 0 && (applyReplies || applyResponseUpdates) && (
+            <p className="text-sm text-purple-700">
+              {responseFiles.length} response file{responseFiles.length !== 1 ? "s" : ""} will
+              be attached to replies.
+            </p>
+          )}
+          {otherRfiFiles.length > 0 && (
+            <p className="text-sm text-purple-700">
+              {otherRfiFiles.length} other RFI file{otherRfiFiles.length !== 1 ? "s" : ""} will
+              be attached to {hasCreates ? "new and existing" : "their"} RFIs.
+            </p>
+          )}
         </div>
       )}
 
@@ -327,11 +339,6 @@ export function RFIReview({
             )}
           </button>
         )}
-      </div>
-
-      {/* File Uploads — always available */}
-      <div className="pt-4 border-t border-gray-200">
-        <RFIFileUpload projectId={projectId} companyId={companyId} />
       </div>
     </div>
   );

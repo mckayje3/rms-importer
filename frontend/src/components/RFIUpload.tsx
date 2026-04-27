@@ -5,7 +5,7 @@ import { rfi as rfiApi } from "@/lib/api";
 import type { RFISession } from "@/types";
 
 interface RFIUploadProps {
-  onUploadComplete: (session: RFISession, rfiFiles: File[]) => void;
+  onUploadComplete: (session: RFISession) => void;
   onBack: () => void;
 }
 
@@ -16,38 +16,12 @@ export function RFIUpload({ onUploadComplete, onBack }: RFIUploadProps) {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Folder picker state
-  const [rfiFiles, setRfiFiles] = useState<File[]>([]);
-  const [responseFileCount, setResponseFileCount] = useState(0);
-  const folderInputRef = useRef<HTMLInputElement>(null);
-
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0];
     if (selected) {
       setFile(selected);
       setError(null);
       setParseResult(null);
-    }
-  };
-
-  const handleFolderSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
-
-    // Filter to RFI-prefixed files
-    const matched = files.filter((f) => /^RFI-\d+/i.test(f.name));
-    setRfiFiles(matched);
-
-    // Count response files specifically
-    const responses = matched.filter((f) => /^RFI-\d+\s*Response/i.test(f.name));
-    setResponseFileCount(responses.length);
-  };
-
-  const handleClearFolder = () => {
-    setRfiFiles([]);
-    setResponseFileCount(0);
-    if (folderInputRef.current) {
-      folderInputRef.current.value = "";
     }
   };
 
@@ -66,6 +40,9 @@ export function RFIUpload({ onUploadComplete, onBack }: RFIUploadProps) {
       }
 
       setParseResult(session);
+      // Hand the parsed session up immediately; the parent then renders the
+      // folder picker beneath this component (mirrors the Submittals flow).
+      onUploadComplete(session);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
@@ -116,56 +93,6 @@ export function RFIUpload({ onUploadComplete, onBack }: RFIUploadProps) {
         </div>
       </div>
 
-      {/* Optional folder picker for RFI files */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          RMS Files Folder <span className="text-gray-400 font-normal">(optional)</span>
-        </label>
-        <p className="text-xs text-gray-500 mb-3">
-          Select the folder containing RFI response PDFs. Files named &quot;RFI-XXXX Response*&quot;
-          will be attached to the corresponding replies in Procore.
-        </p>
-        <div className="flex items-center gap-3">
-          <input
-            ref={folderInputRef}
-            type="file"
-            /* @ts-expect-error webkitdirectory is not in React types */
-            webkitdirectory=""
-            directory=""
-            multiple
-            onChange={handleFolderSelect}
-            className="hidden"
-          />
-          <button
-            type="button"
-            onClick={() => folderInputRef.current?.click()}
-            className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-md
-              hover:bg-purple-700 transition-colors"
-          >
-            Select RMS Files Folder
-          </button>
-          {rfiFiles.length > 0 && (
-            <button
-              type="button"
-              onClick={handleClearFolder}
-              className="text-sm text-gray-500 hover:text-gray-700"
-            >
-              Clear
-            </button>
-          )}
-        </div>
-        {rfiFiles.length > 0 && (
-          <div className="mt-2 text-sm text-purple-700 bg-purple-50 border border-purple-200 rounded-md px-3 py-2">
-            {rfiFiles.length} RFI file{rfiFiles.length !== 1 ? "s" : ""} selected
-            {responseFileCount > 0 && (
-              <span className="text-purple-600">
-                {" "}({responseFileCount} response file{responseFileCount !== 1 ? "s" : ""} will be attached to replies)
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-3">
           <p className="text-sm text-red-700">{error}</p>
@@ -196,15 +123,15 @@ export function RFIUpload({ onUploadComplete, onBack }: RFIUploadProps) {
         </div>
       )}
 
-      {/* Actions */}
-      <div className="flex gap-4">
-        <button
-          onClick={onBack}
-          className="flex-1 py-3 px-4 rounded-lg font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
-        >
-          Back
-        </button>
-        {!parseResult ? (
+      {/* Actions — shown only before parse; parent owns next-step button */}
+      {!parseResult && (
+        <div className="flex gap-4">
+          <button
+            onClick={onBack}
+            className="flex-1 py-3 px-4 rounded-lg font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
+          >
+            Back
+          </button>
           <button
             onClick={handleUpload}
             disabled={!file || uploading}
@@ -219,15 +146,8 @@ export function RFIUpload({ onUploadComplete, onBack }: RFIUploadProps) {
               "Upload & Parse"
             )}
           </button>
-        ) : (
-          <button
-            onClick={() => onUploadComplete(parseResult, rfiFiles)}
-            className="flex-1 py-3 px-4 rounded-lg font-medium bg-orange-500 text-white hover:bg-orange-600 transition-colors"
-          >
-            Continue
-          </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

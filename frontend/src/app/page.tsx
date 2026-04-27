@@ -12,7 +12,7 @@ import {
   ToolSelector,
   RFIUpload,
   RFIReview,
-  RFIFileUpload,
+  RFIFolderPicker,
   DailyLogUpload,
   DailyLogReview,
   ObservationsUpload,
@@ -94,7 +94,10 @@ export default function Home() {
   const [rfiSession, setRfiSession] = useState<RFISession | null>(null);
   const [rfiAnalysis, setRfiAnalysis] = useState<RFIAnalyzeResponse | null>(null);
   const [rfiResult, setRfiResult] = useState<{ created: number; replies: number; responsesAdded: number; errors: string[] } | null>(null);
-  const [rfiFiles, setRfiFiles] = useState<File[]>([]);
+  const [rfiFolderFiles, setRfiFolderFiles] = useState<File[]>([]);
+  const [rfiFilterResult, setRfiFilterResult] = useState<{ new_files: string[]; already_attached: string[]; unmapped_files: string[]; total_checked: number } | null>(null);
+  const [rfiAnalyzing, setRfiAnalyzing] = useState(false);
+  const [rfiUploadResetKey, setRfiUploadResetKey] = useState(0);
   const [dailyLogSession, setDailyLogSession] = useState<DailyLogSession | null>(null);
   const [dailyLogAnalysis, setDailyLogAnalysis] = useState<DailyLogAnalyzeResponse | null>(null);
   const [dailyLogResult, setDailyLogResult] = useState<{ equipment: number; labor: number; narratives: number; errors: string[] } | null>(null);
@@ -388,23 +391,37 @@ export default function Home() {
     }
   };
 
-  const handleRfiUpload = async (session: RFISession, files: File[]) => {
+  const handleRfiUpload = (session: RFISession) => {
+    // Stay on rfi-upload step — the user still needs to (optionally) pick the
+    // RMS files folder before continuing to Review. Mirrors the Submittals flow.
     setRfiSession(session);
-    setRfiFiles(files);
-    if (!project || !company) return;
+    setRfiFolderFiles([]);
+    setRfiFilterResult(null);
+  };
 
-    // Show loading state while analyzing
+  const handleRfiFolderPicked = (
+    files: File[],
+    result: { new_files: string[]; already_attached: string[]; unmapped_files: string[]; total_checked: number } | null
+  ) => {
+    setRfiFolderFiles(files);
+    setRfiFilterResult(result);
+  };
+
+  const handleRfiProceedToReview = async () => {
+    if (!project || !company || !rfiSession) return;
+
+    setRfiAnalyzing(true);
+    setError(null);
     setRfiAnalysis(null);
-    setStep("rfi-review");
-
     try {
-      const analysis = await rfiApi.analyze(project.id, session.session_id, company.id);
+      const analysis = await rfiApi.analyze(project.id, rfiSession.session_id, company.id);
       setRfiAnalysis(analysis);
+      setStep("rfi-review");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to analyze RFIs");
       console.error(err);
-      // Reset back to upload so user isn't stuck on spinner
-      setStep("rfi-upload");
+    } finally {
+      setRfiAnalyzing(false);
     }
   };
 
@@ -837,12 +854,63 @@ export default function Home() {
               Upload the &quot;All Requests for Information&quot; CSV report from RMS.
             </p>
             <RFIUpload
+              key={rfiUploadResetKey}
               onUploadComplete={handleRfiUpload}
               onBack={() => {
                 setSelectedTool(null);
                 setStep("select-tool");
               }}
             />
+
+            {rfiSession && project && (
+              <div className="mt-6 space-y-4">
+                <div className="border-t pt-6">
+                  <h3 className="text-base font-semibold text-gray-900 mb-1">
+                    RMS Files Folder (optional)
+                  </h3>
+                  <p className="text-sm text-gray-600 mb-3">
+                    Pick the folder containing RFI PDFs. &quot;RFI-XXXX Response*&quot;
+                    files attach to replies; other &quot;RFI-XXXX*&quot; files attach
+                    directly to the RFI. Files upload only when you apply changes.
+                  </p>
+                  <RFIFolderPicker
+                    projectId={project.id}
+                    selectedFiles={rfiFolderFiles}
+                    filterResult={rfiFilterResult}
+                    onPick={handleRfiFolderPicked}
+                  />
+                </div>
+
+                <div className="flex gap-4 pt-2">
+                  <button
+                    onClick={() => {
+                      setRfiSession(null);
+                      setRfiFolderFiles([]);
+                      setRfiFilterResult(null);
+                      setRfiUploadResetKey((k) => k + 1);
+                    }}
+                    disabled={rfiAnalyzing}
+                    className="flex-1 py-3 px-4 rounded-lg font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+                  >
+                    Re-upload RFI Report
+                  </button>
+                  <button
+                    onClick={handleRfiProceedToReview}
+                    disabled={rfiAnalyzing}
+                    className="flex-1 py-3 px-4 rounded-lg font-medium bg-orange-500 text-white hover:bg-orange-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {rfiAnalyzing ? (
+                      <>
+                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                        Analyzing...
+                      </>
+                    ) : (
+                      "Continue to Review"
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         );
 
@@ -871,9 +939,11 @@ export default function Home() {
               projectId={project!.id}
               sessionId={rfiSession.session_id}
               companyId={company!.id}
-              rfiFiles={rfiFiles}
+              rfiFiles={rfiFolderFiles}
               onComplete={(result) => {
                 setRfiResult(result);
+                setRfiFolderFiles([]);
+                setRfiFilterResult(null);
                 setStep("complete");
               }}
               onCancel={() => setStep("rfi-upload")}
@@ -1216,16 +1286,6 @@ export default function Home() {
               </div>
             )}
 
-            {selectedTool === "rfis" && project && company && (
-              <div className="max-w-md mx-auto mb-6 text-left">
-                <RFIFileUpload
-                  projectId={project.id}
-                  companyId={company.id}
-                  excludeFiles={rfiFiles.filter(f => /^RFI-\d+\s*Response/i.test(f.name)).map(f => f.name)}
-                />
-              </div>
-            )}
-
             {dailyLogResult && (
               <div className="max-w-md mx-auto mb-6 text-left space-y-4">
                 <div className="bg-gray-50 rounded-lg p-4">
@@ -1365,7 +1425,9 @@ export default function Home() {
                 setRfiSession(null);
                 setRfiAnalysis(null);
                 setRfiResult(null);
-                setRfiFiles([]);
+                setRfiFolderFiles([]);
+                setRfiFilterResult(null);
+                setRfiUploadResetKey((k) => k + 1);
                 setDailyLogSession(null);
                 setDailyLogAnalysis(null);
                 setDailyLogResult(null);

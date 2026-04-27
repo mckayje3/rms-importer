@@ -12,7 +12,7 @@ export { ProjectSetup } from "./ProjectSetup";
 export { ToolSelector } from "./ToolSelector";
 export { RFIUpload } from "./RFIUpload";
 export { RFIReview } from "./RFIReview";
-export { RFIFileUpload } from "./RFIFileUpload";
+export { RFIFolderPicker } from "./RFIFolderPicker";
 export { DailyLogUpload } from "./DailyLogUpload";
 export { DailyLogReview } from "./DailyLogReview";
 export { ObservationsUpload } from "./ObservationsUpload";

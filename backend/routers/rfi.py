@@ -406,10 +406,15 @@ async def execute_rfi_import(
 async def execute_rfi_import_with_files(
     project_id: int,
     request_json: str = Form(...),
-    response_files: list[UploadFile] = File(default=[]),
+    rfi_files: list[UploadFile] = File(default=[]),
     x_auth_session: str = Header(..., alias="X-Auth-Session"),
 ):
-    """Execute RFI import with response file attachments."""
+    """Execute RFI import with all RFI file attachments.
+
+    Files matching `RFI-XXXX Response*` attach to the RFI's reply (created in
+    Phase 1/2). Other `RFI-XXXX*` files attach directly to the RFI in Phase 3
+    using a lookup that includes both pre-existing and just-created RFIs.
+    """
     import os
     import re
     import tempfile
@@ -447,27 +452,42 @@ async def execute_rfi_import_with_files(
             detail="Could not determine RFI Manager.",
         )
 
-    # Save response files to temp dir and build map: rfi_number → [temp_paths]
-    temp_dir = tempfile.mkdtemp(prefix="rfi_response_files_")
+    # Categorize uploaded files: response files attach to replies, others
+    # attach to the RFI itself in Phase 3 once the RFI ID is known.
+    temp_dir = tempfile.mkdtemp(prefix="rfi_files_") if rfi_files else None
     response_file_map: dict[int, list[str]] = {}
+    non_response_file_map: dict[int, list[str]] = {}
 
-    for f in response_files:
+    for f in rfi_files:
         filename = os.path.basename(f.filename or "")
-        match = re.match(r"RFI-(\d+)\s*Response", filename, re.IGNORECASE)
-        if match:
-            rfi_num = int(match.group(1))
-            temp_path = os.path.join(temp_dir, filename)
-            content = await f.read()
-            with open(temp_path, "wb") as fh:
-                fh.write(content)
+        if not filename:
+            continue
+        match = re.match(r"RFI-(\d+)(\s*Response)?", filename, re.IGNORECASE)
+        if not match:
+            continue
+        rfi_num = int(match.group(1))
+        is_response = bool(match.group(2))
+        temp_path = os.path.join(temp_dir, filename)
+        content = await f.read()
+        with open(temp_path, "wb") as fh:
+            fh.write(content)
+        if is_response:
             response_file_map.setdefault(rfi_num, []).append(temp_path)
+        else:
+            non_response_file_map.setdefault(rfi_num, []).append(temp_path)
 
-    logger.info(f"Saved {sum(len(v) for v in response_file_map.values())} response files for {len(response_file_map)} RFIs")
+    logger.info(
+        f"Saved {sum(len(v) for v in response_file_map.values())} response files "
+        f"and {sum(len(v) for v in non_response_file_map.values())} other RFI files"
+    )
 
-    # Count operations
+    # Count operations: creates + response updates + non-response file attaches.
+    # (Response file uploads are part of the create/reply ops that they ride on,
+    # so they're not counted separately.)
     to_create = sum(1 for rfi in parse_result.rfis if rfi.number not in existing_by_number)
     response_update_count = len(request.response_updates) if request.apply_response_updates else 0
-    total_operations = to_create + response_update_count
+    non_response_file_count = sum(len(v) for v in non_response_file_map.values())
+    total_operations = to_create + response_update_count + non_response_file_count
 
     job_id = str(uuid.uuid4())
     file_job_store.create_job(
@@ -493,6 +513,7 @@ async def execute_rfi_import_with_files(
             apply_response_updates=request.apply_response_updates,
             response_updates=request.response_updates,
             response_file_map=response_file_map,
+            non_response_file_map=non_response_file_map,
             temp_dir=temp_dir,
         )
     )
@@ -545,9 +566,16 @@ async def _process_rfi_job(
     apply_response_updates: bool = False,
     response_updates: list[dict] | None = None,
     response_file_map: dict[int, list[str]] | None = None,
+    non_response_file_map: dict[int, list[str]] | None = None,
     temp_dir: str | None = None,
 ):
-    """Background job to create RFIs and add responses in Procore."""
+    """Background job to create RFIs, add responses, and attach files in Procore.
+
+    Phase order: creates → response updates → attach non-response files. The
+    rfi_id_lookup is built up as creates land so Phase 3 can resolve files
+    targeting brand-new RFIs (the bug previously hit when /upload-files ran
+    against a stale cache).
+    """
     file_job_store.update_progress(job_id, status="running")
 
     api = ProcoreAPI(access_token, company_id=company_id)
@@ -556,6 +584,15 @@ async def _process_rfi_job(
     responses_added = 0
     errors = []
     completed_ops = 0
+
+    # Build a lookup of rfi_number → procore_id, seeded with pre-existing RFIs
+    # and extended as Phase 1 creates land. Phase 3 reads from this.
+    rfi_id_lookup: dict[int, int] = {}
+    for num, r in existing_by_number.items():
+        try:
+            rfi_id_lookup[int(num)] = r.id
+        except (ValueError, TypeError, AttributeError):
+            pass
 
     def _update_progress():
         file_job_store.update_progress(
@@ -591,7 +628,13 @@ async def _process_rfi_job(
                     result = await api.create_rfi(project_id, rfi_data)
                     created += 1
                     completed_ops += 1
-                    logger.info(f"Created RFI {rfi.rfi_number} (Procore ID: {result.get('id')})")
+                    new_rfi_id = result.get("id")
+                    if new_rfi_id and rfi.number is not None:
+                        try:
+                            rfi_id_lookup[int(rfi.number)] = new_rfi_id
+                        except (ValueError, TypeError):
+                            pass
+                    logger.info(f"Created RFI {rfi.rfi_number} (Procore ID: {new_rfi_id})")
                     _update_progress()
 
                     if apply_replies and rfi.response_body and rfi.is_answered:
@@ -658,6 +701,41 @@ async def _process_rfi_job(
                 except Exception as e:
                     errors.append(f"Failed to add response to {rfi_number}: {str(e)}")
                     logger.error(f"Error adding response to {rfi_number}: {e}")
+
+        # Phase 3: Attach non-response files to RFIs (RFI itself, not the reply)
+        if non_response_file_map:
+            import os
+            for rfi_num, paths in non_response_file_map.items():
+                procore_rfi_id = rfi_id_lookup.get(rfi_num)
+                if not procore_rfi_id:
+                    for path in paths:
+                        errors.append(
+                            f"RFI-{rfi_num:04d}: no Procore RFI matched; "
+                            f"{os.path.basename(path)} not attached"
+                        )
+                        completed_ops += 1
+                    _update_progress()
+                    continue
+                for path in paths:
+                    fname = os.path.basename(path)
+                    try:
+                        prostore_file_id = await api.upload_file(
+                            project_id, path, upload_folder_id=RFI_UPLOAD_FOLDER_ID
+                        )
+                        await asyncio.sleep(2)
+                        await api.attach_file_to_rfi(
+                            project_id, procore_rfi_id, prostore_file_id
+                        )
+                        await asyncio.sleep(2)
+                        logger.info(f"Attached {fname} to RFI-{rfi_num:04d}")
+                    except RateLimitError as e:
+                        errors.append(f"Rate limited on {fname}: {e}")
+                        await asyncio.sleep(60)
+                    except Exception as e:
+                        errors.append(f"File {fname}: {e}")
+                        logger.error(f"Failed to attach {fname}: {e}")
+                    completed_ops += 1
+                    _update_progress()
 
     finally:
         # Clean up temp files
@@ -771,172 +849,6 @@ async def get_rfi_job_status(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
 
     return _job_to_rfi_status(job)
-
-
-@router.post("/projects/{project_id}/upload-files")
-async def upload_rfi_files(
-    project_id: int,
-    files: list[UploadFile] = File(...),
-    x_auth_session: str = Header(..., alias="X-Auth-Session"),
-    x_company_id: int = Header(..., alias="X-Company-Id"),
-):
-    """Upload files and attach them to matching RFIs."""
-    import os
-    import re
-    import tempfile
-
-    try:
-        access_token = get_token(x_auth_session)
-    except HTTPException:
-        raise HTTPException(status_code=401, detail="Invalid auth session")
-
-    # Use cached RFI lookup from analyze step (avoids burning API calls)
-    cache = _rfi_cache.get(project_id)
-    if cache:
-        rfi_lookup = cache["rfi_lookup"]
-    else:
-        # No cache — fetch fresh (slower, costs API calls)
-        api = ProcoreAPI(access_token, company_id=x_company_id)
-        try:
-            existing_rfis = await api.get_rfis(project_id)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to fetch RFIs: {e}")
-
-        rfi_lookup: dict[int, int] = {}
-        for r in existing_rfis:
-            if r.number is not None:
-                try:
-                    rfi_lookup[int(r.number)] = r.id
-                except (ValueError, TypeError):
-                    pass
-
-    temp_dir = tempfile.mkdtemp(prefix="rfi_files_")
-    manifest = []
-    unmapped = 0
-
-    for file in files:
-        filename = os.path.basename(file.filename or "")
-        if not filename:
-            continue
-
-        match = re.match(r"RFI-(\d+)", filename)
-        if not match:
-            unmapped += 1
-            continue
-
-        rfi_num = int(match.group(1))
-        procore_rfi_id = rfi_lookup.get(rfi_num)
-        if not procore_rfi_id:
-            unmapped += 1
-            continue
-
-        temp_path = os.path.join(temp_dir, filename)
-        content = await file.read()
-        with open(temp_path, "wb") as f:
-            f.write(content)
-
-        manifest.append({
-            "filename": filename,
-            "temp_path": temp_path,
-            "rfi_number": rfi_num,
-            "procore_rfi_id": procore_rfi_id,
-        })
-
-    if not manifest:
-        raise HTTPException(
-            status_code=400,
-            detail=f"No files matched existing RFIs. {unmapped} file(s) could not be mapped.",
-        )
-
-    # Database-backed job (same pattern as submittal file uploads)
-    job_id = str(uuid.uuid4())
-    file_job_store.create_job(
-        job_id=job_id,
-        project_id=str(project_id),
-        company_id=str(x_company_id),
-        session_id=x_auth_session,
-        manifest=[{"filename": m["filename"], "rfi_number": m["rfi_number"]} for m in manifest],
-        total_files=len(manifest),
-    )
-
-    asyncio.create_task(
-        _process_rfi_file_job(
-            job_id=job_id,
-            project_id=project_id,
-            manifest=manifest,
-            access_token=access_token,
-            company_id=x_company_id,
-            temp_dir=temp_dir,
-        )
-    )
-
-    return {
-        "job_id": job_id,
-        "status": "background",
-        "total_files": len(manifest),
-        "unmapped_files": unmapped,
-    }
-
-
-async def _process_rfi_file_job(
-    job_id: str,
-    project_id: int,
-    manifest: list[dict],
-    access_token: str,
-    company_id: int,
-    temp_dir: str,
-):
-    """Background job to upload files and attach to RFIs."""
-    import shutil
-
-    file_job_store.update_progress(job_id, status="running")
-
-    api = ProcoreAPI(access_token, company_id=company_id)
-    uploaded = 0
-    errors = []
-
-    try:
-        for item in manifest:
-            try:
-                prostore_file_id = await api.upload_file(
-                    project_id, item["temp_path"], upload_folder_id=RFI_UPLOAD_FOLDER_ID
-                )
-                await asyncio.sleep(2)
-
-                await asyncio.sleep(2)  # Spike limit: pause before attach
-
-                await api.attach_file_to_rfi(
-                    project_id, item["procore_rfi_id"], prostore_file_id
-                )
-                uploaded += 1
-                logger.info(f"Attached {item['filename']} to RFI-{item['rfi_number']:04d}")
-
-                file_job_store.update_progress(
-                    job_id,
-                    uploaded_files=uploaded,
-                    result_summary={"uploaded": uploaded, "total": len(manifest), "errors": len(errors)},
-                )
-
-                await asyncio.sleep(5)  # Cooldown between files
-            except RateLimitError as e:
-                errors.append(f"Rate limited on {item['filename']}: {e}")
-                await asyncio.sleep(60)
-            except Exception as e:
-                errors.append(f"Failed {item['filename']}: {e}")
-                logger.error(f"Error uploading {item['filename']}: {e}")
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-    file_job_store.update_progress(
-        job_id,
-        status="completed",
-        uploaded_files=uploaded,
-        errors=errors,
-        result_summary={"uploaded": uploaded, "total": len(manifest), "errors": len(errors)},
-    )
-    logger.info(
-        f"RFI file job {job_id} completed: {uploaded} attached, {len(errors)} errors"
-    )
 
 
 @router.delete("/session/{session_id}")
