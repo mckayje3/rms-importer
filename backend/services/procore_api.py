@@ -441,23 +441,20 @@ class ProcoreAPI:
             )
             doc_id = doc_response["id"]
         except Exception as e:
-            # "name has already been taken" — file exists but wasn't in cache
+            # "name has already been taken" — file exists but the cache missed
+            # it (e.g. created between cache build and now, or cache failed).
+            # Bust the cache and rebuild via _find_existing_document so the
+            # paginated lookup catches it.
             if "400" in str(e):
-                logger.info(f"Document '{filename}' already exists (400), searching for it...")
-                docs = await self._get(
-                    f"/rest/v1.0/projects/{project_id}/documents",
-                    params={
-                        "view": "extended",
-                        "filters[document_type]": "file",
-                        "per_page": 50,
-                        "sort": "-updated_at",
-                    },
-                )
-                doc = next((d for d in docs if d.get("name") == filename), None)
-                if doc and doc.get("file", {}).get("current_version", {}).get("prostore_file"):
-                    pid = doc["file"]["current_version"]["prostore_file"]["id"]
-                    self._doc_cache.setdefault(project_id, {})[filename] = pid
+                logger.info(f"Document '{filename}' already exists (400), rebuilding doc cache...")
+                self._doc_cache.pop(project_id, None)
+                pid = await self._find_existing_document(project_id, filename, folder_id)
+                if pid:
                     return pid
+                raise Exception(
+                    f"POST /documents returned 400 for '{filename}' but no matching "
+                    f"document found in folder {folder_id} after cache rebuild"
+                )
             raise
 
         await asyncio.sleep(1)  # Spike limit protection
@@ -490,27 +487,38 @@ class ProcoreAPI:
     ) -> Optional[int]:
         """Find an existing document by filename and return its prostore_file_id.
 
-        Uses a per-project cache: first call fetches all docs in the folder
-        (1 API call), subsequent calls are free.
+        Uses a per-project cache: first call paginates through every doc in
+        the folder so we can detect duplicates regardless of folder size.
+        Folders from prior migrations can hold 1000+ files; without
+        pagination, an upload of a file beyond page 1 would 400 out at the
+        document-create step with "name has already been taken".
         """
         # Build cache on first call for this project
         if project_id not in self._doc_cache:
             self._doc_cache[project_id] = {}
+            page = 1
+            per_page = 300
             try:
-                docs = await self._get(
-                    f"/rest/v1.0/projects/{project_id}/documents",
-                    params={
-                        "view": "extended",
-                        "filters[document_type]": "file",
-                        "filters[parent_id]": folder_id,
-                        "per_page": 300,
-                    },
-                )
-                for doc in docs:
-                    name = doc.get("name", "")
-                    prostore = doc.get("file", {}).get("current_version", {}).get("prostore_file")
-                    if name and prostore:
-                        self._doc_cache[project_id][name] = prostore["id"]
+                while True:
+                    docs = await self._get(
+                        f"/rest/v1.0/projects/{project_id}/documents",
+                        params={
+                            "view": "extended",
+                            "filters[document_type]": "file",
+                            "filters[parent_id]": folder_id,
+                            "per_page": per_page,
+                            "page": page,
+                        },
+                    )
+                    for doc in docs:
+                        name = doc.get("name", "")
+                        prostore = doc.get("file", {}).get("current_version", {}).get("prostore_file")
+                        if name and prostore:
+                            self._doc_cache[project_id][name] = prostore["id"]
+                    if len(docs) < per_page:
+                        break
+                    page += 1
+                    await asyncio.sleep(0.5)  # Rate limit protection
                 logger.info(f"Cached {len(self._doc_cache[project_id])} existing documents for project {project_id}")
             except Exception as e:
                 logger.warning(f"Failed to cache existing documents: {e}")
