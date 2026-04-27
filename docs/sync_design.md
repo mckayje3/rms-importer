@@ -9,18 +9,14 @@ Instead of querying Procore to detect changes, we compare new RMS exports agains
 ## User Workflow
 
 ### First Import (Full Migration)
-1. User uploads RMS files (Submittal Register, Transmittal Log, Transmittal Report)
-2. App parses and creates all submittals in Procore
-3. App stores the parsed RMS data as the **baseline** for this project
+1. User uploads two CSVs on the Upload step (Submittal Register Report, Transmittal Report) and (optionally) picks the RMS Files folder.
+2. App parses, computes the plan, and on Apply runs the unified job: creates all submittals → uploads + attaches files → applies field updates → saves baseline.
 
 ### Subsequent Syncs
-1. User exports fresh files from RMS
-2. User uploads new files to the app
-3. App parses new files and compares against stored baseline
-4. App shows diff: "5 new submittals, 8 QA codes changed, 3 new revisions"
-5. User reviews and confirms
-6. App pushes only the changes to Procore
-7. App updates baseline to the new data
+1. User exports fresh CSVs and (optionally) drops new transmittal PDFs into the RMS Files folder.
+2. Upload step parses CSVs and runs `/filter-files` on the picked folder — categorizes files into new / already-uploaded / unrecognized without sending bytes.
+3. Review step shows the diff vs. baseline plus a File Plan section breaking files out by destination (existing vs. brand-new submittals).
+4. Apply runs `/execute-all` (multipart, files in the same request) and a single background job orchestrates creates → file attaches → updates → baseline save.
 
 ---
 
@@ -219,96 +215,78 @@ class SyncPlan:
 
 ## API Endpoints
 
-### POST /projects/{project_id}/sync/analyze
+CSV uploads happen separately via `POST /rms/upload` (multipart, returns an `rms_session_id`). The sync endpoints below operate against that session.
 
-Upload new RMS files and get a sync plan.
+### POST /sync/projects/{project_id}/filter-files
 
-**Request:**
-```
-Content-Type: multipart/form-data
-- submittal_register: file
-- transmittal_log: file
-- transmittal_report: file
-```
-
-**Response:**
-```json
-{
-  "has_baseline": true,
-  "baseline_date": "2026-03-15T10:30:00Z",
-  "plan": {
-    "creates": [
-      {
-        "key": "05 12 00|3|0",
-        "title": "Structural Steel Shop Drawings"
-      }
-    ],
-    "updates": [
-      {
-        "key": "03 30 00|1|0",
-        "procore_id": 98765432,
-        "changes": [
-          {"field": "qa_code", "old": "C", "new": "A"},
-          {"field": "status", "old": "open", "new": "closed"}
-        ]
-      }
-    ],
-    "deletions": [],
-    "file_uploads": ["Transmittal 05 12 00-3 - Steel.pdf"],
-    "files_already_uploaded": 45
-  },
-  "summary": "3 new submittals, 8 updates, 1 file to upload"
-}
-```
-
-### POST /projects/{project_id}/sync/execute
-
-Execute the sync plan.
+Filename-only check — categorizes files against the baseline without uploading bytes. Used by the folder picker on the Upload step.
 
 **Request:**
 ```json
 {
-  "session_id": "abc123",
-  "actions": {
-    "creates": true,
-    "updates": true,
-    "deletions": false,
-    "file_uploads": true
-  }
+  "session_id": "<rms_session_id>",
+  "filenames": ["Transmittal 03 30 00-1 - Concrete.pdf", "..."]
 }
 ```
 
 **Response:**
 ```json
 {
-  "status": "completed",
-  "results": {
-    "created": 3,
-    "updated": 8,
-    "files_uploaded": 1,
-    "errors": []
-  },
-  "new_baseline_saved": true
+  "new_files":         ["Transmittal 03 30 00-1 - Concrete.pdf"],
+  "already_uploaded":  ["Transmittal 03 30 00-2 - Rebar.pdf"],
+  "unmapped_files":    ["random.pdf"],
+  "total_checked":     3
 }
 ```
 
-### GET /projects/{project_id}/sync/baseline
+### POST /sync/projects/{project_id}/analyze
 
-Get info about stored baseline.
+Compute the sync plan from the parsed RMS data and the (optional) list of picked filenames.
 
-**Response:**
+**Request:**
 ```json
 {
-  "has_baseline": true,
-  "last_sync": "2026-03-15T10:30:00Z",
-  "submittal_count": 2084,
-  "file_count": 1090
+  "session_id": "<rms_session_id>",
+  "project_id": 123,
+  "company_id": 456,
+  "file_list":  ["Transmittal 03 30 00-1 - Concrete.pdf"]
 }
 ```
 
-### DELETE /projects/{project_id}/sync/baseline
+**Response:** `{baseline, plan, summary}` where `plan` contains `creates`, `updates`, `flags`, `file_uploads`, `files_already_uploaded`, `has_changes`, `summary`.
 
-Reset baseline (for re-import scenarios).
+### POST /sync/projects/{project_id}/execute-all  ← primary write endpoint
+
+Multipart endpoint that takes both sync options and the actual file bytes. Kicks off `process_sync_job` as one orchestrated background job and returns a `job_id`.
+
+**Request (multipart):**
+- `request_json`: JSON `{session_id, apply_creates, apply_updates, apply_date_updates, repair_custom_fields}`
+- `files`: zero or more file uploads (the picked transmittal PDFs)
+- Headers: `X-Auth-Session`, `X-Company-Id`
+
+**Response:** `SyncExecuteResponse` with `update_job_id` set; poll `GET /sync/projects/{id}/file-jobs/{job_id}` for status.
+
+**Job phases (in order):**
+1. Create new submittals → record each new Procore ID in memory.
+2. Save baseline checkpoint.
+3. Upload + attach files. The `key_to_procore_id` lookup combines pre-existing baseline IDs with the in-memory IDs from phase 1, so files for brand-new submittals attach correctly.
+4. Apply field updates (status, dates, custom fields).
+5. Save final baseline + sync history entry.
+6. Clean up temp files.
+
+The unified order is the fix for the silent-fail bug: previously, file uploads were a separate `process_file_job` that built its lookup from the baseline alone, so files for newly-created submittals couldn't attach.
+
+### POST /sync/projects/{project_id}/execute  (legacy, no files)
+
+Same as `execute-all` but JSON-only with no file bytes. Calls `process_sync_job(file_manifest=None)`. Kept for flows that don't need file uploads.
+
+### GET /sync/projects/{project_id}/baseline / DELETE same
+
+Read or reset the stored baseline. DELETE is used for re-import scenarios.
+
+### POST /sync/projects/{project_id}/bootstrap
+
+Match RMS data against existing Procore submittals and seed a baseline without creating anything. Used when a project was migrated outside this app (e.g. via the PowerShell scripts).
 
 ---
 
@@ -361,58 +339,55 @@ Same schema, but production-ready with:
 
 ## UI Flow
 
-### Sync Page
+Three-step wizard: **Upload → Review → Apply**. All inputs are collected on Upload, the diff is previewed on Review, and the actual writes happen as one orchestrated background job triggered from Apply.
+
+### Step 1: Upload (CSVs + folder picker)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Sync RMS Data                                              │
+│  Upload RMS Files                                           │
 ├─────────────────────────────────────────────────────────────┤
+│  [Submittal Register Report.csv]   ✓ Uploaded               │
+│  [Transmittal Report.csv]          ✓ Uploaded               │
 │                                                             │
-│  Last synced: March 15, 2026 at 10:30 AM                   │
-│  Submittals in baseline: 2,084                              │
-│  Files uploaded: 1,090                                      │
+│  [Upload & Parse Files]                                     │
 │                                                             │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Upload new RMS exports to check for changes        │   │
-│  │                                                     │   │
-│  │  [Submittal Register.xlsx]  ✓ Uploaded              │   │
-│  │  [Transmittal Log.xlsx]     ✓ Uploaded              │   │
-│  │  [Transmittal Report.xls]   ✓ Uploaded              │   │
-│  │                                                     │   │
-│  │  [Analyze Changes]                                  │   │
-│  └─────────────────────────────────────────────────────┘   │
+│  ── after parse: green summary appears ──                   │
 │                                                             │
+│  RMS Files Folder (optional)                                │
+│  [Select RMS Files Folder]                                  │
+│  → 12 new files to upload, 8 already uploaded               │
+│                                                             │
+│  [Re-upload RMS Files]   [Continue to Review]               │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Sync Plan Review
+The folder picker calls `/filter-files` immediately on selection. **No file bytes are uploaded yet** — handles are held in the browser until Apply.
+
+### Step 2: Review (preview only)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Sync Plan                                                  │
+│  Sync Review                                                │
 ├─────────────────────────────────────────────────────────────┤
+│  Baseline: last synced 2026-04-20, 2,084 submittals         │
 │                                                             │
-│  Changes detected:                                          │
+│  ☑ 3 New Submittals                          [Expand]       │
+│  ☑ 8 QA Code Updates                         [Expand]       │
+│  ☑ 2 Date Updates                            [Expand]       │
+│    File Plan — 12 to upload                  [Expand]       │
+│       └─ 8 will attach to existing submittals               │
+│       └─ 4 will attach to NEW submittals (created above)    │
+│       └─ 8 already uploaded — skip                          │
+│    0 Items Removed                                          │
 │                                                             │
-│  ✓ 3 new submittals                          [View]        │
-│  ✓ 8 QA code updates                         [View]        │
-│  ✓ 2 new revisions                           [View]        │
-│  ✓ 5 files to upload                         [View]        │
-│  ○ 0 removed in RMS                                        │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  QA Code Updates (8)                                │   │
-│  │                                                     │   │
-│  │  03 30 00-1    C → A  (Rev & Resubmit → Approved)  │   │
-│  │  03 30 00-2    D → B  (Disapproved → Approved)     │   │
-│  │  05 12 00-1.1  - → A  (blank → Approved)           │   │
-│  │  ...                                                │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                                                             │
-│  [Apply Selected Changes]        [Cancel]                   │
-│                                                             │
+│  [Back]                              [Apply]                │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+### Step 3: Apply (live progress)
+
+Apply POSTs to `/execute-all` (multipart with files), receives a `job_id`, and shows a polling progress bar. The user can navigate away — the job continues, and reopening the app reattaches to the running job.
 
 ---
 

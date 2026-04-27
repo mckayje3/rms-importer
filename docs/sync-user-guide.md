@@ -6,157 +6,154 @@ This guide walks through updating Procore submittal data from RMS using the web 
 
 - Access to RMS (Resident Management System)
 - A Procore account with submittal access
-- The RMS Importer app running locally (backend + frontend)
+- The RMS Importer app (web — see deployment URL — or local backend + frontend)
 
 ## Step 1: Download RMS Files
 
-Export four files from RMS. All files should be saved in Excel (.xlsx) or CSV format.
+Export two CSV files from RMS plus (optionally) a folder of transmittal PDFs.
 
-### Submittal Register
-1. In RMS, go to **Submittals > Submittal Register**
-2. Click **Export** and save as `.xlsx`
+### Submittal Register Report (required)
 
-### Submittal Assignments
-1. In RMS, go to **Submittals > Submittal Assignments**
-2. Click **Export** and save as `.xlsx`
+1. In RMS, go to **Contract Reports > Submit > Submittal Register**
+2. Click **Preview**, then **Save** as **CSV**
+3. Save as `Submittal Register Report.csv`
 
-### Transmittal Log
-1. In RMS, go to **Submittals > Transmittal Log**
-2. **Important:** Click **Completed Transmittals** before downloading
-3. Click **Export** and save as `.xlsx`
+This single file replaces the older Submittal Register + Submittal Assignments combo. It carries all submittals with paragraph references, classifications (Info), and types.
 
-### Transmittal Report
-1. In RMS, go to **Contract Reports**
-2. Click **Submit**
-3. Double-click **Transmittal Log** (to avoid confusion with the Transmittal Log above, we call this Transmittal Report)
-4. Click **Preview**
-5. Click the **Save** icon (floppy disk icon) and choose **CSV** format
+### Transmittal Report (required for revisions/dates/QA codes)
 
-### RMS Files (Transmittal PDFs)
-If there are new transmittal documents since the last sync:
-1. In RMS, go to the file download area
-2. Filter by date to download only new files (since last sync)
-3. Save to the `RMS Files` folder alongside the existing files
+1. In RMS, go to **Contract Reports > Submit > Transmittal Log**
+2. Double-click **Transmittal Log**, click **Preview**, then **Save** as **CSV**
+3. Save as `Transmittal Report.csv`
 
-## Step 2: Start the App
+### RMS Files folder (optional — only if uploading PDFs this run)
 
-Open a terminal and run:
+1. In RMS, go to **Import/Export > Document Package Export**
+2. Check both:
+   - "All Documents in Contractor Transmittal Document Packages"
+   - "All Documents in Contractor Submittal Item Document Packages"
+3. Download all files into a single folder (e.g., `RMS Files`)
+
+Files should be named `Transmittal {Section}-{Num}[.{Rev}] - {Description}.pdf`. The app filters to that pattern automatically — anything else in the folder is ignored.
+
+## Step 2: Open the App
+
+Local dev:
 ```
 powershell -File rms-importer/start_dev.ps1
 ```
+Backend: http://localhost:8000 — Frontend: http://localhost:3000
 
-This starts two servers:
-- **Backend** on http://localhost:8000
-- **Frontend** on http://localhost:3000
-
-Open http://localhost:3000 in your browser.
+Production: open the deployed URL (Vercel) or use the Procore embedded app.
 
 ## Step 3: Connect to Procore
 
 1. Click **Connect with Procore**
-2. You'll be redirected to Procore's login page
-3. Sign in and click **Allow** to authorize the app
-4. You'll be redirected back to the app
+2. Sign in and authorize the app
+3. You'll be redirected back
 
-## Step 4: Select Project
+## Step 4: Select Project & Tool
 
-1. Your company will auto-select if you only have one
-2. Select the target project from the dropdown (e.g., "Dobbins Security Forces Facility")
-3. Wait for the project stats to load — this can take **30-60 seconds** for large projects
-4. Once stats appear (submittal count, spec sections, revisions), click **Continue**
+1. Pick the **Company** and **Project** (auto-selected when embedded in Procore)
+2. Wait for stats to load (30-60s for large projects)
+3. Pick **Submittals** on the tool selector
 
-## Step 5: Upload RMS Files
+## Step 5: Upload Step (CSVs + folder picker)
 
-1. Select each of the four files using the file pickers:
-   - **Submittal Register** — the `.xlsx` export
-   - **Submittal Assignments** — the `.xlsx` export
-   - **Transmittal Log** — the `.xlsx` export (make sure it's the Completed Transmittals version)
-   - **Transmittal Report** — the `.csv` export from Contract Reports
-2. Click **Upload & Parse Files**
-3. The app will parse all four files and compare against the stored baseline
+This is the only step where you provide inputs. Two things happen here:
 
-## Step 6: Review Changes
+1. **Upload the two CSVs** (Register Report, Transmittal Report) and click **Upload & Parse Files**.
+2. **(Optional) Pick the RMS Files folder.** A "Select RMS Files Folder" button appears below the parse summary once the CSVs are accepted. Click it and pick the folder of transmittal PDFs.
+   - The app immediately checks each filename against the project baseline and shows a count: `N new files to upload, M already uploaded, K unrecognized`. **No bytes are uploaded yet** — file handles are held in the browser until you confirm on the next step.
+3. Click **Continue to Review**.
 
-The Sync Review screen shows what changed since the last sync:
+If you don't have new PDFs this run, skip the folder picker and just click Continue.
 
-### Baseline Status
-- **Last Synced** — when the last sync was run
-- **Submittals in Baseline** — total submittals tracked
-- **Files Uploaded** — total files tracked
+## Step 6: Review Step (preview only)
 
-### Changes Detected
-Changes are grouped by type with color coding:
+The Sync Review screen shows what *would* change. Nothing has been touched yet.
 
+### Sections
 | Section | Color | Description |
 |---------|-------|-------------|
-| **New Submittals** | Green | New submittals or revisions to create in Procore |
-| **QA Code Updates** | Yellow | QA codes that changed (e.g., C → A = approved) |
-| **Date Updates** | Blue | Transmittal dates that changed |
-| **Files to Upload** | Purple | New transmittal PDFs to attach to submittals |
-| **Items Removed** | Orange | Items in baseline but not in new RMS export (flagged, not deleted) |
+| **New Submittals** | Green | Submittals to create in Procore |
+| **QA Code Updates** | Yellow | QA codes that changed |
+| **Date Updates** | Blue | Government Received / Returned dates that changed |
+| **Other Updates** | Gray | Title / type / paragraph / QC code / info changes |
+| **File Plan** | Purple | Files to upload, broken out by destination |
+| **Items Removed** | Orange | In baseline but not in latest export — flagged, not deleted |
 
-Click on any section to expand and see the details. Use the **checkboxes** to select which changes to apply.
+### File Plan breakdown
+- **Will attach to existing submittals** — files whose target submittals already exist in Procore.
+- **Will attach to new submittals (created above)** — files whose target submittals will be created in this same run. (This case used to silently fail; now handled in one orchestrated job.)
+- **Already uploaded — will skip** — filenames seen in the project baseline.
+- **Unrecognized name — will skip** — files that don't match any RMS submittal.
 
-### If "Everything is in sync!"
-This means no changes were detected between the uploaded files and the stored baseline. Verify you uploaded the latest files.
+Use the checkboxes on each section to deselect anything you don't want applied.
 
-## Step 7: Apply Changes
+### "Everything is in sync!"
+No changes were detected and you didn't pick any new files. Verify the CSV exports are current.
 
-1. Review all sections and uncheck anything you don't want to apply
-2. Click **Apply Selected Changes**
-3. The app will process each change against the Procore API
-4. This may take several minutes for file uploads (each file requires multiple API calls)
-5. When complete, you'll see a summary with counts and any errors
+## Step 7: Apply Step
 
-### Understanding Results
-- **Status: Completed** — all changes applied successfully
-- **Status: Partial** — some changes applied, check errors
-- **Created** — new submittals created in Procore
-- **Updated** — existing submittals updated
-- **Files Uploaded** — files attached to submittals
-- **Flagged for Review** — items removed from RMS, flagged in the app (not deleted from Procore)
+Click **Apply**. The app posts everything (CSVs, sync options, file bytes) to one background job and shows live progress. Order is fixed:
+
+1. **Create new submittals** (records each new Procore ID in memory)
+2. **Save baseline checkpoint**
+3. **Upload + attach files** (to both pre-existing and just-created submittals)
+4. **Apply field updates** to existing submittals
+5. **Save final baseline**
+
+You can navigate away — the job continues. Reopen the app and the Complete page will reattach to the running job's progress.
+
+### Result summary
+- **Status: Completed** — all selected changes applied
+- **Status: Partial** — some applied, see error list
+- **Created / Updated / Files Uploaded** — counts
+- **Flagged for Review** — items removed from RMS, surfaced in the app (not deleted from Procore)
 
 ## Troubleshooting
 
 ### "Failed to load companies" or "Failed to load projects"
-- Your auth session may have expired. Refresh the page and reconnect to Procore.
+Auth session expired. Refresh the page and reconnect to Procore.
 
 ### "Failed to analyze data"
-- The backend may have restarted. Re-upload your files.
+Backend may have restarted. Re-upload your CSVs.
 
-### "No Procore ID for ..." errors during file upload
-- The submittal exists in Procore but the app doesn't know its ID. This is resolved by running the ID backfill (ask your admin).
+### "no Procore ID for submittal key …" during file phase
+A file's target submittal isn't in the baseline and wasn't created in this run (e.g. it's a revision whose parent doesn't exist yet). Verify the CSV exports include the parent submittal.
 
-### File upload 400 errors
-- A file with the same name may already exist in Procore. Check the Procore documents folder.
+### File upload 400 errors mentioning `/documents`
+Usually "name has already been taken" — i.e. a file with that name already exists in the Procore folder. The app paginates the entire target folder to detect duplicates; if you still see this, the duplicate may be in a different folder than `PROCORE_UPLOAD_FOLDER_ID`.
+
+### File upload 401 errors
+Stale OAuth token. The app refreshes at job start, but if Procore rejects the refresh, you'll need to reconnect. Click logout, then **Connect with Procore** again.
 
 ### Stats take too long to load
-- Normal for projects with 2000+ submittals. The app fetches all submittals to calculate counts. Wait 30-60 seconds.
+Normal for projects with 2000+ submittals. Wait 30-60 seconds.
 
 ## Data Flow Summary
 
 ```
-RMS Files (4 exports)
+RMS CSVs (Register + Transmittal Report) + RMS Files folder
     ↓
-Upload & Parse
+Upload Step: parse CSVs, filename-check folder against baseline
     ↓
-Compare against stored baseline (SQLite)
+Review Step: diff vs baseline, file plan preview
     ↓
-Sync Review (creates, updates, files, flags)
+Apply Step (one background job):
+    creates → save baseline → file uploads → updates → save final baseline
     ↓
-Apply to Procore API
-    ↓
-Update baseline for next sync
+Complete Step: live progress, then summary
 ```
 
 ### What comes from each file
 
 | File | Provides |
 |------|----------|
-| Submittal Register | Section, item number, title, type, QC code, status |
-| Submittal Assignments | Info code (GA/FIO/S), contractor |
-| Transmittal Log | Revision numbers, 4 dates (contractor prepared, govt received, govt returned, contractor received) |
-| Transmittal Report | QA codes for all submittals and revisions (authoritative source) |
+| Submittal Register Report | Section, item number, title, type, paragraph, QC code, Info code, status |
+| Transmittal Report | Revisions, government received/returned dates, QA codes (authoritative) |
+| RMS Files folder | Transmittal PDFs to upload to Procore Documents and attach to submittals |
 
 ### QA Code → Procore Status Mapping
 
