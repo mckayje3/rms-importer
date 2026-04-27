@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { FolderFileUpload } from "./FolderFileUpload";
-import { FileJobProgress } from "./FileJobProgress";
+import type { FileFilterResponse } from "@/types";
 
 interface FieldChange {
   field: string;
@@ -57,19 +56,15 @@ interface BaselineInfo {
 interface SyncViewProps {
   baseline: BaselineInfo;
   plan: SyncPlan;
+  filterResult: FileFilterResponse | null;
+  selectedFileCount: number;
   onExecute: (options: { creates: boolean; updates: boolean; dates: boolean }) => void;
   onBootstrap?: () => Promise<void>;
   onCancel: () => void;
   onDone?: () => void;
   isExecuting: boolean;
-  projectId?: number;
-  rmsSessionId?: string;
-  companyId?: number;
-  fileJobId?: string | null;
-  onFileJobIdChange?: (jobId: string | null) => void;
 }
 
-// Field display names
 const FIELD_LABELS: Record<string, string> = {
   qa_code: "QA Code",
   qc_code: "QC Code",
@@ -84,30 +79,19 @@ const FIELD_LABELS: Record<string, string> = {
 export function SyncView({
   baseline,
   plan,
+  filterResult,
+  selectedFileCount,
   onExecute,
   onBootstrap,
   onCancel,
   onDone,
   isExecuting,
-  projectId,
-  rmsSessionId,
-  companyId,
-  fileJobId: externalFileJobId,
-  onFileJobIdChange,
 }: SyncViewProps) {
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
   const [applyCreates, setApplyCreates] = useState(true);
   const [applyUpdates, setApplyUpdates] = useState(true);
   const [applyDates, setApplyDates] = useState(true);
   const [bootstrapping, setBootstrapping] = useState(false);
-  const [internalFileJobId, setInternalFileJobId] = useState<string | null>(null);
-  // Prefer external (parent-managed) state when provided so the file job
-  // survives navigation away from this screen.
-  const fileJobId = externalFileJobId !== undefined ? externalFileJobId : internalFileJobId;
-  const setFileJobId = (id: string | null) => {
-    setInternalFileJobId(id);
-    onFileJobIdChange?.(id);
-  };
 
   const toggleSection = (section: string) => {
     setExpandedSection(expandedSection === section ? null : section);
@@ -121,7 +105,7 @@ export function SyncView({
     });
   };
 
-  // Group updates by change type for better display
+  // Group updates by change type for display
   const qaCodeUpdates = plan.updates.filter((u) =>
     u.changes.some((c) => c.field === "qa_code")
   );
@@ -134,6 +118,26 @@ export function SyncView({
     (u) =>
       !qaCodeUpdates.includes(u) && !dateUpdates.includes(u)
   );
+
+  // Bucket the user's selected files by destination: existing submittals vs
+  // submittals that will be created in this sync. Files targeting brand-new
+  // submittals used to silently fail when uploads ran before creates — the
+  // unified job fixes that, but the count is still useful in the preview.
+  const createKeys = new Set(plan.creates.map((c) => c.key));
+  const filesNew = filterResult?.new_files ?? [];
+  let filesToNewSubmittals = 0;
+  let filesToExistingSubmittals = 0;
+  for (const upload of plan.file_uploads) {
+    if (!filesNew.includes(upload.filename)) continue;
+    if (upload.submittal_keys.some((k) => createKeys.has(k))) {
+      filesToNewSubmittals += 1;
+    } else {
+      filesToExistingSubmittals += 1;
+    }
+  }
+  const filesAlreadyUploaded = filterResult?.already_uploaded.length ?? 0;
+  const filesUnrecognized = filterResult?.unmapped_files.length ?? 0;
+  const filesPlanned = filesNew.length;
 
   return (
     <div className="space-y-6">
@@ -195,7 +199,7 @@ export function SyncView({
         </div>
       )}
 
-      {/* Refresh file baseline — always available when bootstrap callback exists */}
+      {/* Refresh file baseline — rescan Procore for already-uploaded files */}
       {plan.mode !== "full_migration" && onBootstrap && (
         <div className="flex items-center gap-3">
           <button
@@ -222,7 +226,7 @@ export function SyncView({
         <p className="text-blue-700">{plan.summary}</p>
       </div>
 
-      {!plan.has_changes && (
+      {!plan.has_changes && filesPlanned === 0 && (
         <div className="text-center py-8">
           <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -234,7 +238,7 @@ export function SyncView({
         </div>
       )}
 
-      {plan.has_changes && (
+      {(plan.has_changes || filesPlanned > 0) && (
         <>
           {/* New Submittals */}
           {plan.creates.length > 0 && (
@@ -475,6 +479,68 @@ export function SyncView({
             </div>
           )}
 
+          {/* File Plan — preview of what the Apply button will upload+attach */}
+          {(filterResult || selectedFileCount > 0) && (
+            <div className="border border-purple-200 rounded-lg overflow-hidden">
+              <button
+                onClick={() => toggleSection("files")}
+                className="w-full flex items-center justify-between p-4 bg-purple-50 hover:bg-purple-100 transition-colors"
+              >
+                <span className="font-medium text-purple-800">
+                  File Plan
+                  <span className="ml-2 text-sm font-normal text-purple-600">
+                    {filesPlanned} to upload
+                    {filesAlreadyUploaded > 0 && `, ${filesAlreadyUploaded} already uploaded`}
+                    {filesUnrecognized > 0 && `, ${filesUnrecognized} unrecognized`}
+                  </span>
+                </span>
+                <svg
+                  className={`w-5 h-5 text-purple-600 transition-transform ${
+                    expandedSection === "files" ? "rotate-180" : ""
+                  }`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {expandedSection === "files" && (
+                <div className="p-4 border-t border-purple-200 space-y-2 text-sm">
+                  {filesToExistingSubmittals > 0 && (
+                    <div className="flex justify-between text-gray-700">
+                      <span>Will attach to existing submittals</span>
+                      <span className="font-medium text-purple-700">{filesToExistingSubmittals}</span>
+                    </div>
+                  )}
+                  {filesToNewSubmittals > 0 && (
+                    <div className="flex justify-between text-gray-700">
+                      <span>Will attach to new submittals (created above)</span>
+                      <span className="font-medium text-green-700">{filesToNewSubmittals}</span>
+                    </div>
+                  )}
+                  {filesAlreadyUploaded > 0 && (
+                    <div className="flex justify-between text-gray-500">
+                      <span>Already uploaded — will skip</span>
+                      <span>{filesAlreadyUploaded}</span>
+                    </div>
+                  )}
+                  {filesUnrecognized > 0 && (
+                    <div className="flex justify-between text-orange-600">
+                      <span>Unrecognized name — will skip</span>
+                      <span>{filesUnrecognized}</span>
+                    </div>
+                  )}
+                  {filesPlanned === 0 && filesAlreadyUploaded === 0 && filesUnrecognized === 0 && (
+                    <p className="text-gray-500">
+                      No folder picked on the Upload step. Go back if you want to attach files.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Flagged Items */}
           {plan.flags.length > 0 && (
             <div className="border border-orange-200 rounded-lg overflow-hidden">
@@ -521,11 +587,14 @@ export function SyncView({
               disabled={isExecuting}
               className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >
-              Cancel
+              Back
             </button>
             <button
               onClick={handleExecute}
-              disabled={isExecuting || (!applyCreates && !applyUpdates)}
+              disabled={
+                isExecuting ||
+                (!applyCreates && !applyUpdates && filesPlanned === 0)
+              }
               className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {isExecuting ? (
@@ -545,68 +614,18 @@ export function SyncView({
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     />
                   </svg>
-                  Syncing...
+                  Starting...
                 </>
               ) : (
-                "Apply Selected Changes"
+                "Apply"
               )}
             </button>
           </div>
         </>
       )}
 
-      {/* File Uploads — always visible */}
-      <div className="border rounded-lg overflow-hidden">
-        <button
-          onClick={() => toggleSection("files")}
-          className="w-full flex items-center justify-between p-4 bg-purple-50 hover:bg-purple-100 transition-colors"
-        >
-          <span className="font-medium text-purple-800">
-            File Uploads
-            {plan.files_already_uploaded > 0 && (
-              <span className="ml-2 text-sm font-normal text-gray-500">
-                ({plan.files_already_uploaded} already uploaded)
-              </span>
-            )}
-          </span>
-          <svg
-            className={`w-5 h-5 text-purple-600 transition-transform ${
-              expandedSection === "files" ? "rotate-180" : ""
-            }`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-        {expandedSection === "files" && (
-          <div className="p-4 border-t border-purple-200 space-y-3">
-            {fileJobId ? (
-              <FileJobProgress
-                projectId={projectId!}
-                jobId={fileJobId}
-                label="files"
-                onComplete={() => {}}
-              />
-            ) : projectId && rmsSessionId && companyId ? (
-              <FolderFileUpload
-                projectId={projectId}
-                rmsSessionId={rmsSessionId}
-                companyId={companyId}
-                onUploadStarted={setFileJobId}
-              />
-            ) : (
-              <p className="text-sm text-gray-500">
-                File upload not available in this context.
-              </p>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Done button — shown when no submittal changes to apply */}
-      {!plan.has_changes && onDone && (
+      {/* Done button — shown when nothing to apply */}
+      {!plan.has_changes && filesPlanned === 0 && onDone && (
         <div className="pt-4 border-t">
           <button
             onClick={onDone}

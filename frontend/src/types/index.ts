@@ -234,13 +234,6 @@ export interface FileJobStatus {
   } | null;
 }
 
-export interface FileUploadResult {
-  job_id: string;
-  status: string;
-  total_files: number;
-  unmapped_files?: number;
-}
-
 // Tool Selection
 export type ToolType = "submittals" | "rfis" | "daily-logs" | "observations";
 

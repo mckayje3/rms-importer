@@ -17,6 +17,7 @@ import {
   DailyLogReview,
   ObservationsUpload,
   ObservationsReview,
+  FolderPicker,
 } from "@/components";
 import { FileJobProgress } from "@/components/FileJobProgress";
 import { auth, projects as projectsApi, submittals, sync, setup, health, rfi as rfiApi, dailyLogs as dailyLogsApi, observations as observationsApi } from "@/lib/api";
@@ -34,6 +35,7 @@ import type {
   SyncExecuteResponse,
   ProjectConfigData,
   FileJobStatus,
+  FileFilterResponse,
   RFISession,
   RFIAnalyzeResponse,
   DailyLogSession,
@@ -76,6 +78,14 @@ export default function Home() {
   const [syncAnalysis, setSyncAnalysis] = useState<SyncAnalysisResponse | null>(null);
   const [syncResult, setSyncResult] = useState<SyncExecuteResponse | null>(null);
   const [fileJobId, setFileJobId] = useState<string | null>(null);
+  // Folder of RMS files picked on the Upload step. Files are held as browser
+  // File handles through Review and only transmitted on Apply (option B from
+  // the wizard redesign). Page refresh forces a re-pick.
+  const [selectedFolderFiles, setSelectedFolderFiles] = useState<File[]>([]);
+  const [filterResult, setFilterResult] = useState<FileFilterResponse | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  // Bump to force RMSUpload to remount with fresh internal state.
+  const [rmsUploadResetKey, setRmsUploadResetKey] = useState(0);
   const [recentJobs, setRecentJobs] = useState<FileJobStatus[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [autoSelectingProject, setAutoSelectingProject] = useState(false);
@@ -432,24 +442,40 @@ export default function Home() {
     }
   };
 
-  const handleRmsUpload = async (session: RMSSession) => {
+  const handleRmsUpload = (session: RMSSession) => {
+    // Stay on the Upload step — the user still needs to (optionally) pick the
+    // RMS files folder before continuing to Review. The folder picker shows
+    // beneath the RMS upload component once rmsSession is set.
     setRmsSession(session);
+    setSelectedFolderFiles([]);
+    setFilterResult(null);
+  };
 
-    if (!project || !company) return;
+  const handleFolderPicked = (files: File[], result: FileFilterResponse | null) => {
+    setSelectedFolderFiles(files);
+    setFilterResult(result);
+  };
 
+  const handleProceedToReview = async () => {
+    if (!project || !company || !rmsSession) return;
+
+    setAnalyzing(true);
+    setError(null);
     try {
-      // Always use sync analyze - it handles both full migration and incremental
-      setStep("analyze");
-      const syncResult = await sync.analyze(
+      const filenames = selectedFolderFiles.map((f) => f.name);
+      const result = await sync.analyze(
         project.id,
-        session.session_id,
-        company.id
+        rmsSession.session_id,
+        company.id,
+        filenames
       );
-      setSyncAnalysis(syncResult);
+      setSyncAnalysis(result);
       setStep("sync-review");
     } catch (err) {
-      setError("Failed to analyze data");
+      setError(err instanceof Error ? err.message : "Failed to analyze data");
       console.error(err);
+    } finally {
+      setAnalyzing(false);
     }
   };
 
@@ -469,13 +495,22 @@ export default function Home() {
     setError(null);
 
     try {
+      // Only send file bytes for entries the backend confirmed are new and
+      // mappable. Already-uploaded and unmapped files are filtered out.
+      const newFileNames = new Set(filterResult?.new_files ?? []);
+      const filesToSend = selectedFolderFiles.filter((f) => newFileNames.has(f.name));
+
       const result = await sync.execute(
         project.id,
         rmsSession.session_id,
         company.id,
-        options
+        options,
+        filesToSend
       );
       setSyncResult(result);
+      // Free the File handles now that the bytes are queued in the background job.
+      setSelectedFolderFiles([]);
+      setFilterResult(null);
       setStep("complete");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sync failed");
@@ -583,12 +618,63 @@ export default function Home() {
               Upload your RMS export files to begin the import process.
             </p>
             <RMSUpload
+              key={rmsUploadResetKey}
               onUploadComplete={handleRmsUpload}
               onBack={() => {
                 setSelectedTool(null);
                 setStep("select-tool");
               }}
             />
+
+            {rmsSession && project && (
+              <div className="mt-6 space-y-4">
+                <div className="border-t pt-6">
+                  <h3 className="text-base font-semibold text-gray-900 mb-1">
+                    RMS Files Folder (optional)
+                  </h3>
+                  <p className="text-sm text-gray-600 mb-3">
+                    Pick the folder containing your &quot;Transmittal *&quot; PDFs. Files
+                    are categorized now but only uploaded when you apply changes.
+                  </p>
+                  <FolderPicker
+                    projectId={project.id}
+                    rmsSessionId={rmsSession.session_id}
+                    selectedFiles={selectedFolderFiles}
+                    filterResult={filterResult}
+                    onPick={handleFolderPicked}
+                  />
+                </div>
+
+                <div className="flex gap-4 pt-2">
+                  <button
+                    onClick={() => {
+                      setRmsSession(null);
+                      setSelectedFolderFiles([]);
+                      setFilterResult(null);
+                      setRmsUploadResetKey((k) => k + 1);
+                    }}
+                    disabled={analyzing}
+                    className="flex-1 py-3 px-4 rounded-lg font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+                  >
+                    Re-upload RMS Files
+                  </button>
+                  <button
+                    onClick={handleProceedToReview}
+                    disabled={analyzing}
+                    className="flex-1 py-3 px-4 rounded-lg font-medium bg-orange-500 text-white hover:bg-orange-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {analyzing ? (
+                      <>
+                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                        Analyzing...
+                      </>
+                    ) : (
+                      "Continue to Review"
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         );
 
@@ -642,13 +728,21 @@ export default function Home() {
             <SyncView
               baseline={syncAnalysis.baseline}
               plan={syncAnalysis.plan}
+              filterResult={filterResult}
+              selectedFileCount={selectedFolderFiles.length}
               onExecute={handleSyncExecute}
               onBootstrap={async () => {
                 if (!project || !company || !rmsSession) return;
                 const result = await sync.bootstrap(project.id, rmsSession.session_id, company.id);
                 alert(`Baseline bootstrapped: ${result.matched} matched, ${result.unmatched} unmatched out of ${result.total_rms} RMS submittals.`);
-                // Re-analyze with the new baseline
-                const syncResult = await sync.analyze(project.id, rmsSession.session_id, company.id);
+                // Re-analyze with the new baseline, preserving the picked file list
+                const filenames = selectedFolderFiles.map((f) => f.name);
+                const syncResult = await sync.analyze(
+                  project.id,
+                  rmsSession.session_id,
+                  company.id,
+                  filenames
+                );
                 setSyncAnalysis(syncResult);
               }}
               onCancel={() => setStep("upload-rms")}
@@ -665,11 +759,6 @@ export default function Home() {
                 setStep("complete");
               }}
               isExecuting={importing}
-              projectId={project?.id}
-              rmsSessionId={rmsSession?.session_id}
-              companyId={company?.id}
-              fileJobId={fileJobId}
-              onFileJobIdChange={setFileJobId}
             />
           </div>
         );
@@ -1268,6 +1357,9 @@ export default function Home() {
                 setImportResult(null);
                 setSyncAnalysis(null);
                 setSyncResult(null);
+                setSelectedFolderFiles([]);
+                setFilterResult(null);
+                setRmsUploadResetKey((k) => k + 1);
                 setProjectConfig(null);
                 setSelectedTool(null);
                 setRfiSession(null);

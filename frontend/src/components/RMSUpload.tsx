@@ -37,6 +37,9 @@ export function RMSUpload({ onUploadComplete, onBack }: RMSUploadProps) {
       }
 
       setParseResult(session);
+      // Hand the parsed session up immediately so the parent can show the
+      // folder picker beneath this component without an extra click.
+      onUploadComplete(session);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
       console.error(err);
@@ -106,16 +109,16 @@ export function RMSUpload({ onUploadComplete, onBack }: RMSUploadProps) {
       )}
 
       {/* Actions */}
-      <div className="flex gap-4">
-        {onBack && (
-          <button
-            onClick={onBack}
-            className="flex-1 py-3 px-4 rounded-lg font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
-          >
-            Back
-          </button>
-        )}
-        {!parseResult ? (
+      {!parseResult && (
+        <div className="flex gap-4">
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="flex-1 py-3 px-4 rounded-lg font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              Back
+            </button>
+          )}
           <button
             onClick={handleUpload}
             disabled={!canUpload || uploading}
@@ -137,15 +140,8 @@ export function RMSUpload({ onUploadComplete, onBack }: RMSUploadProps) {
               "Upload & Parse Files"
             )}
           </button>
-        ) : (
-          <button
-            onClick={() => onUploadComplete(parseResult)}
-            className="flex-1 py-3 px-4 rounded-lg font-medium bg-orange-500 text-white hover:bg-orange-600 transition-colors"
-          >
-            Continue
-          </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -18,7 +18,6 @@ import type {
   ProjectConfigData,
   FileFilterResponse,
   FileJobStatus,
-  FileUploadResult,
   RFISession,
   RMSRFI,
   RFIAnalyzeResponse,
@@ -289,20 +288,40 @@ export const sync = {
     projectId: number,
     sessionId: string,
     companyId: number,
-    options: { creates: boolean; updates: boolean; dates: boolean }
+    options: { creates: boolean; updates: boolean; dates: boolean },
+    files: File[] = []
   ): Promise<SyncExecuteResponse> => {
-    return fetchAPI(`/sync/projects/${projectId}/execute`, {
+    const authSession = typeof window !== "undefined"
+      ? sessionStorage.getItem("auth_session")
+      : null;
+
+    const formData = new FormData();
+    formData.append("request_json", JSON.stringify({
+      session_id: sessionId,
+      apply_creates: options.creates,
+      apply_updates: options.updates,
+      apply_date_updates: options.dates,
+    }));
+    for (const file of files) {
+      formData.append("files", file);
+    }
+
+    const response = await fetch(`${API_BASE}/sync/projects/${projectId}/execute-all`, {
       method: "POST",
+      credentials: "include",
       headers: {
+        ...(authSession ? { "X-Auth-Session": authSession } : {}),
         "X-Company-Id": String(companyId),
       },
-      body: JSON.stringify({
-        session_id: sessionId,
-        apply_creates: options.creates,
-        apply_updates: options.updates,
-        apply_date_updates: options.dates,
-      }),
+      body: formData,
     });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new APIError(response.status, error);
+    }
+
+    return response.json();
   },
 
   bootstrap: async (
@@ -331,60 +350,6 @@ export const sync = {
         filenames,
       }),
     });
-  },
-
-  uploadFiles: async (
-    projectId: number,
-    files: File[],
-    rmsSessionId: string,
-    companyId: number,
-    email?: string,
-    onProgress?: (batch: number, totalBatches: number) => void
-  ): Promise<FileUploadResult> => {
-    const authSession = typeof window !== "undefined"
-      ? sessionStorage.getItem("auth_session")
-      : null;
-
-    const BATCH_SIZE = 5;
-    let lastResult: FileUploadResult | null = null;
-
-    // Upload in batches to stay within request size limits
-    const totalBatches = Math.ceil(files.length / BATCH_SIZE);
-
-    for (let i = 0; i < files.length; i += BATCH_SIZE) {
-      const batch = files.slice(i, i + BATCH_SIZE);
-      const formData = new FormData();
-      for (const file of batch) {
-        formData.append("files", file);
-      }
-      if (email) {
-        formData.append("email", email);
-      }
-
-      const response = await fetch(
-        `${API_BASE}/sync/projects/${projectId}/upload-files`,
-        {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            ...(authSession ? { "X-Auth-Session": authSession } : {}),
-            "X-Company-Id": String(companyId),
-            "X-RMS-Session": rmsSessionId,
-          },
-          body: formData,
-        }
-      );
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: response.statusText }));
-        throw new APIError(response.status, error.detail || "Upload failed");
-      }
-
-      lastResult = await response.json();
-      onProgress?.(Math.floor(i / BATCH_SIZE) + 1, totalBatches);
-    }
-
-    return lastResult!;
   },
 
   getFileJobStatus: async (

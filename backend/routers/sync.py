@@ -1,16 +1,17 @@
 """Sync endpoints for incremental RMS to Procore updates."""
 import os
 import asyncio
+import json
 import logging
+import shutil
 import tempfile
 import uuid
 from fastapi import APIRouter, HTTPException, Header, UploadFile, File, Form
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from typing import Optional
 
 from services.sync_service import SyncService
 from services.procore_api import ProcoreAPI
-from services.file_job import process_file_job
 from models.sync import (
     SyncPlan,
     SyncAnalysisResponse,
@@ -244,9 +245,8 @@ async def execute_sync(
         repair_custom_fields=request.repair_custom_fields,
     )
 
-    # Count total operations for progress tracking.
-    # File uploads are handled separately by the FolderFileUpload widget /
-    # process_file_job — they are not part of this background sync job.
+    # Count total operations for progress tracking. This endpoint is the
+    # legacy "no files" entry point; /execute-all handles files.
     total_ops = 0
     if request.apply_creates:
         total_ops += len(plan.creates)
@@ -453,113 +453,138 @@ async def filter_files(
     }
 
 
-@router.post("/projects/{project_id}/upload-files")
-async def upload_files(
+@router.post("/projects/{project_id}/execute-all")
+async def execute_sync_with_files(
     project_id: int,
-    files: list[UploadFile] = File(...),
+    request_json: str = Form(...),
+    files: list[UploadFile] = File(default=[]),
     x_auth_session: str = Header(..., alias="X-Auth-Session"),
-    x_company_id: int = Header(..., alias="X-Company-Id"),
-    x_rms_session: str = Header(..., alias="X-RMS-Session"),
-    email: Optional[str] = Form(None),
-) -> dict:
+    company_id: int = Header(..., alias="X-Company-Id"),
+) -> SyncExecuteResponse:
     """
-    Upload files and start a background job to attach them to Procore submittals.
+    Execute a sync plan with attached file uploads in one orchestrated job.
 
-    1. Saves uploaded files to a temp directory
-    2. Maps each file to its target submittal(s)
-    3. Creates a background job
-    4. Returns job ID for status polling
+    Phase order: creates → upload+attach files → updates → save baseline.
+    Files are saved to a temp dir up front; the background job streams them
+    to Procore and cleans up when done.
     """
-    # Validate auth
     try:
         get_token(x_auth_session)
     except HTTPException:
         raise HTTPException(status_code=401, detail="Invalid auth session")
 
-    # Get RMS data for file mapping
     try:
-        rms_data = get_rms_data(x_rms_session)
+        request = SyncExecuteRequest(**json.loads(request_json))
+    except (json.JSONDecodeError, ValidationError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid request_json: {e}")
+
+    try:
+        rms_data = get_rms_data(request.session_id)
     except HTTPException:
         raise HTTPException(
             status_code=404,
             detail="RMS session not found. Upload RMS files first.",
         )
 
-    # Save files to temp directory
-    temp_dir = tempfile.mkdtemp(prefix="rms_upload_")
-    saved_files = []
-
-    try:
-        for upload_file in files:
-            # Strip folder prefix from browser uploads (e.g. "RMS Files/file.pdf" -> "file.pdf")
-            filename = os.path.basename(upload_file.filename)
-            file_path = os.path.join(temp_dir, filename)
-            content = await upload_file.read()
-            with open(file_path, "wb") as f:
-                f.write(content)
-            saved_files.append({
-                "filename": filename,
-                "temp_path": file_path,
-            })
-    except Exception as e:
-        # Clean up on error
-        import shutil
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        raise HTTPException(status_code=500, detail=f"Failed to save files: {e}")
-
-    # Map files to submittals
     _project_config = project_config_store.get_config(str(project_id))
     _config_data = _project_config["config_data"] if _project_config else None
-    sync_service = SyncService(str(project_id), str(x_company_id), config=_config_data)
 
-    filenames = [f["filename"] for f in saved_files]
-    file_to_keys = sync_service.map_files_to_submittals(filenames, rms_data)
+    sync_service = SyncService(str(project_id), str(company_id), config=_config_data)
+    plan = sync_service.analyze(rms_data, repair_custom_fields=request.repair_custom_fields)
 
-    # Build manifest: only files that mapped to submittals
-    manifest = []
-    for item in saved_files:
-        keys = file_to_keys.get(item["filename"], [])
-        if keys:
-            manifest.append({
-                "filename": item["filename"],
-                "temp_path": item["temp_path"],
-                "submittal_keys": keys,
-            })
+    # Save uploaded file bytes to a temp dir for the background job to consume.
+    temp_dir = tempfile.mkdtemp(prefix="rms_unified_") if files else None
+    saved_files: list[dict] = []
+    if files:
+        try:
+            for upload_file in files:
+                filename = os.path.basename(upload_file.filename)
+                file_path = os.path.join(temp_dir, filename)
+                content = await upload_file.read()
+                with open(file_path, "wb") as f:
+                    f.write(content)
+                saved_files.append({"filename": filename, "temp_path": file_path})
+        except Exception as e:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise HTTPException(status_code=500, detail=f"Failed to save files: {e}")
 
-    if not manifest:
-        import shutil
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        return {
-            "status": "no_files",
-            "message": "No files could be mapped to submittals",
-            "total_files": 0,
-        }
+    # Map filenames to submittal keys; drop unmapped files (they have nowhere to attach).
+    manifest: list[dict] = []
+    if saved_files:
+        filenames = [f["filename"] for f in saved_files]
+        file_to_keys = sync_service.map_files_to_submittals(filenames, rms_data)
+        for item in saved_files:
+            keys = file_to_keys.get(item["filename"], [])
+            if keys:
+                manifest.append({
+                    "filename": item["filename"],
+                    "temp_path": item["temp_path"],
+                    "submittal_keys": keys,
+                })
 
-    # Create job
+    total_ops = 0
+    if request.apply_creates:
+        total_ops += len(plan.creates)
+    if request.apply_updates:
+        total_ops += len(plan.updates)
+    total_ops += len(manifest)
+
+    if total_ops == 0:
+        if temp_dir:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        return SyncExecuteResponse(
+            status="completed",
+            created=0,
+            updated=0,
+            files_uploaded=0,
+            flagged=len(plan.flags),
+            errors=[],
+            baseline_updated=True,
+            update_job_id=None,
+        )
+
+    from services.sync_job import process_sync_job
+
     job_id = str(uuid.uuid4())
     file_job_store.create_job(
         job_id=job_id,
         project_id=str(project_id),
-        company_id=str(x_company_id),
+        company_id=str(company_id),
         session_id=x_auth_session,
         manifest=manifest,
-        total_files=len(manifest),
-        email=email,
+        total_files=total_ops,
     )
 
-    # Start background task
-    asyncio.create_task(process_file_job(job_id))
+    asyncio.create_task(process_sync_job(
+        job_id=job_id,
+        project_id=project_id,
+        company_id=company_id,
+        session_id=x_auth_session,
+        rms_session_id=request.session_id,
+        config_data=_config_data,
+        apply_creates=request.apply_creates,
+        apply_updates=request.apply_updates,
+        apply_date_updates=request.apply_date_updates,
+        repair_custom_fields=request.repair_custom_fields,
+        file_manifest=manifest,
+    ))
 
     logger.info(
-        f"File upload job {job_id} created: {len(manifest)} files for project {project_id}"
+        f"Unified sync job {job_id} created: {len(plan.creates)} creates, "
+        f"{len(plan.updates)} updates, {len(manifest)} files "
+        f"(skipped {len(saved_files) - len(manifest)} unmapped)"
     )
 
-    return {
-        "job_id": job_id,
-        "status": "queued",
-        "total_files": len(manifest),
-        "unmapped_files": len(saved_files) - len(manifest),
-    }
+    return SyncExecuteResponse(
+        status="background",
+        created=0,
+        updated=0,
+        files_uploaded=0,
+        flagged=len(plan.flags),
+        errors=[],
+        baseline_updated=False,
+        update_job_id=job_id,
+    )
 
 
 @router.get("/projects/{project_id}/file-jobs/{job_id}")

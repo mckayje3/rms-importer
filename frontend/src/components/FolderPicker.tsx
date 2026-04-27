@@ -4,109 +4,74 @@ import { useState, useRef, useCallback } from "react";
 import { sync } from "@/lib/api";
 import type { FileFilterResponse } from "@/types";
 
-interface FolderFileUploadProps {
+interface FolderPickerProps {
   projectId: number;
   rmsSessionId: string;
-  companyId: number;
-  onUploadStarted: (jobId: string) => void;
+  selectedFiles: File[];
+  filterResult: FileFilterResponse | null;
+  onPick: (files: File[], filterResult: FileFilterResponse | null) => void;
 }
 
-export function FolderFileUpload({
+export function FolderPicker({
   projectId,
   rmsSessionId,
-  companyId,
-  onUploadStarted,
-}: FolderFileUploadProps) {
+  selectedFiles,
+  filterResult,
+  onPick,
+}: FolderPickerProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [allFiles, setAllFiles] = useState<File[]>([]);
-  const [filterResult, setFilterResult] = useState<FileFilterResponse | null>(null);
   const [isFiltering, setIsFiltering] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<string>("");
-  const [error, setError] = useState<string>("");
   const [showNewFiles, setShowNewFiles] = useState(false);
+  const [error, setError] = useState<string>("");
 
   const handleFolderSelect = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = Array.from(e.target.files || []);
       if (files.length === 0) return;
 
-      // Filter to only Transmittal files (the ones that match our naming convention)
       const transmittalFiles = files.filter((f) =>
         f.name.startsWith("Transmittal ")
       );
 
-      setAllFiles(transmittalFiles);
-      setFilterResult(null);
       setError("");
 
       if (transmittalFiles.length === 0) {
         setError(
           `Found ${files.length} files but none match the "Transmittal ..." naming convention.`
         );
+        onPick([], null);
         return;
       }
 
-      // Send filenames to backend for filtering
       setIsFiltering(true);
       try {
         const filenames = transmittalFiles.map((f) => f.name);
         const result = await sync.filterFiles(projectId, rmsSessionId, filenames);
-        setFilterResult(result);
+        onPick(transmittalFiles, result);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to check files");
+        onPick([], null);
       } finally {
         setIsFiltering(false);
       }
     },
-    [projectId, rmsSessionId]
+    [projectId, rmsSessionId, onPick]
   );
 
-  const handleUpload = useCallback(async () => {
-    if (!filterResult || filterResult.new_files.length === 0) return;
-
-    // Get only the new files from the full file list
-    const newFileNames = new Set(filterResult.new_files);
-    const filesToUpload = allFiles.filter((f) => newFileNames.has(f.name));
-
-    setIsUploading(true);
-    setError("");
-
-    try {
-      const result = await sync.uploadFiles(
-        projectId,
-        filesToUpload,
-        rmsSessionId,
-        companyId,
-        undefined,
-        (batch, total) => {
-          setUploadProgress(`Sending batch ${batch} of ${total}...`);
-        }
-      );
-
-      if (result.job_id) {
-        onUploadStarted(result.job_id);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
-      setIsUploading(false);
-    }
-  }, [filterResult, allFiles, projectId, rmsSessionId, companyId, onUploadStarted]);
-
   const handleClear = useCallback(() => {
-    setAllFiles([]);
-    setFilterResult(null);
+    onPick([], null);
     setError("");
-    setUploadProgress("");
-    setIsUploading(false);
     if (inputRef.current) {
       inputRef.current.value = "";
     }
-  }, []);
+  }, [onPick]);
+
+  const newCount = filterResult?.new_files.length ?? 0;
+  const alreadyCount = filterResult?.already_uploaded.length ?? 0;
+  const unmappedCount = filterResult?.unmapped_files.length ?? 0;
 
   return (
     <div className="space-y-3">
-      {/* Folder selection */}
       <div className="flex items-center gap-3">
         <input
           ref={inputRef}
@@ -117,12 +82,12 @@ export function FolderFileUpload({
           multiple
           onChange={handleFolderSelect}
           className="hidden"
-          id="folder-upload"
+          id="folder-picker"
         />
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          disabled={isFiltering || isUploading}
+          disabled={isFiltering}
           className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-md
             hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed
             transition-colors"
@@ -135,12 +100,14 @@ export function FolderFileUpload({
               </svg>
               Checking files...
             </span>
+          ) : selectedFiles.length > 0 ? (
+            "Change Folder"
           ) : (
             "Select RMS Files Folder"
           )}
         </button>
 
-        {allFiles.length > 0 && !isUploading && (
+        {selectedFiles.length > 0 && (
           <button
             type="button"
             onClick={handleClear}
@@ -151,29 +118,27 @@ export function FolderFileUpload({
         )}
       </div>
 
-      {/* Filter results */}
       {filterResult && (
         <div className="rounded-md border border-purple-200 bg-purple-50 p-3 space-y-2">
           <div className="flex items-center gap-4 text-sm">
-            {filterResult.new_files.length > 0 && (
+            {newCount > 0 && (
               <span className="text-purple-700 font-medium">
-                {filterResult.new_files.length} new file{filterResult.new_files.length !== 1 ? "s" : ""} to upload
+                {newCount} new file{newCount !== 1 ? "s" : ""} to upload
               </span>
             )}
-            {filterResult.already_uploaded.length > 0 && (
+            {alreadyCount > 0 && (
               <span className="text-gray-500">
-                {filterResult.already_uploaded.length} already uploaded
+                {alreadyCount} already uploaded
               </span>
             )}
-            {filterResult.unmapped_files.length > 0 && (
+            {unmappedCount > 0 && (
               <span className="text-orange-600">
-                {filterResult.unmapped_files.length} unrecognized
+                {unmappedCount} unrecognized
               </span>
             )}
           </div>
 
-          {/* Expandable list of new files */}
-          {filterResult.new_files.length > 0 && (
+          {newCount > 0 && (
             <div>
               <button
                 type="button"
@@ -194,38 +159,14 @@ export function FolderFileUpload({
             </div>
           )}
 
-          {/* Upload button */}
-          {filterResult.new_files.length > 0 && !isUploading && (
-            <button
-              type="button"
-              onClick={handleUpload}
-              className="mt-2 px-4 py-2 text-sm font-medium text-white bg-purple-600
-                rounded-md hover:bg-purple-700 transition-colors"
-            >
-              Upload & Attach {filterResult.new_files.length} File{filterResult.new_files.length !== 1 ? "s" : ""}
-            </button>
-          )}
-
-          {filterResult.new_files.length === 0 && (
+          {newCount === 0 && alreadyCount > 0 && (
             <p className="text-sm text-green-700">
-              All files are already uploaded. Nothing new to upload.
+              All matching files are already uploaded — nothing new to upload.
             </p>
           )}
         </div>
       )}
 
-      {/* Upload progress */}
-      {isUploading && uploadProgress && (
-        <div className="flex items-center gap-2 text-sm text-purple-600">
-          <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-          {uploadProgress}
-        </div>
-      )}
-
-      {/* Error */}
       {error && (
         <div className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-700">
           {error}

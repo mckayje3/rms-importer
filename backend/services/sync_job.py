@@ -5,6 +5,8 @@ so the HTTP request can return immediately with a job ID for polling.
 """
 import asyncio
 import logging
+import shutil
+from pathlib import Path
 from typing import Optional
 
 from database import file_job_store, baseline_store
@@ -73,13 +75,18 @@ async def process_sync_job(
     apply_updates: bool = True,
     apply_date_updates: bool = True,
     repair_custom_fields: bool = False,
+    file_manifest: Optional[list[dict]] = None,
 ) -> None:
     """
-    Process submittal creates and updates in the background.
+    Process submittal creates, file uploads, and updates as one orchestrated job.
 
-    File uploads are handled separately by process_file_job (kicked off from
-    the FolderFileUpload widget). Progress is tracked via file_job_store —
-    the frontend polls for updates.
+    Phase order matters: creates run first so the in-memory key→procore_id map
+    can include just-created submittals when files are attached. Without that
+    ordering, files for new submittals would silently fail to attach because
+    their procore_id wouldn't be in the baseline yet.
+
+    file_manifest entries: {"filename", "temp_path", "submittal_keys"}.
+    Temp files are cleaned up at the end of the job regardless of outcome.
     """
     from models.mappings import get_status_id
     from services.sync_service import SyncService
@@ -90,6 +97,10 @@ async def process_sync_job(
     uploaded_files: dict[str, int] = {}
     errors: list[str] = []
     ops_completed = 0
+    manifest = file_manifest or []
+    temp_dir: Optional[str] = None
+    if manifest:
+        temp_dir = str(Path(manifest[0]["temp_path"]).parent)
 
     try:
         access_token = get_token(session_id)
@@ -220,6 +231,72 @@ async def process_sync_job(
                 logger.info(f"Job {job_id}: baseline saved after {len(created_ids)} creates")
             except Exception as e:
                 logger.warning(f"Job {job_id}: failed to save baseline after creates: {e}")
+
+        # === FILE UPLOADS + ATTACH ===
+        # Build key→procore_id from baseline AND just-created IDs so files
+        # targeting new submittals can resolve. The baseline read picks up
+        # any prior creates from earlier sync runs.
+        if manifest:
+            key_to_procore_id: dict[str, int] = dict(created_ids)
+            baseline_after_creates = baseline_store.get_baseline(str(project_id))
+            if baseline_after_creates and baseline_after_creates.get("data", {}).get("submittals"):
+                for key, sub in baseline_after_creates["data"]["submittals"].items():
+                    procore_id = sub.get("procore_id")
+                    if procore_id and key not in key_to_procore_id:
+                        key_to_procore_id[key] = procore_id
+
+            for item in manifest:
+                filename = item["filename"]
+                temp_path = item["temp_path"]
+                submittal_keys = item["submittal_keys"]
+
+                try:
+                    prostore_file_id = await api.upload_file(project_id, temp_path)
+                    await asyncio.sleep(DELAY_BETWEEN_CALLS)
+
+                    attached_count = 0
+                    for key in submittal_keys:
+                        procore_id = key_to_procore_id.get(key)
+                        if procore_id:
+                            await api.attach_file_to_submittal(
+                                project_id, procore_id, prostore_file_id
+                            )
+                            attached_count += 1
+                            await asyncio.sleep(DELAY_BETWEEN_CALLS)
+                        else:
+                            errors.append(
+                                f"{filename}: no Procore ID for submittal key {key}"
+                            )
+
+                    uploaded_files[filename] = prostore_file_id
+                    logger.info(
+                        f"Job {job_id}: uploaded {filename} "
+                        f"(attached to {attached_count} submittals)"
+                    )
+
+                except RateLimitError as e:
+                    errors.append(f"{filename}: rate limited — {e}")
+                    logger.warning(f"Job {job_id}: rate limited on {filename}, waiting 5 min")
+                    await asyncio.sleep(300)
+                    try:
+                        prostore_file_id = await api.upload_file(project_id, temp_path)
+                        for key in submittal_keys:
+                            procore_id = key_to_procore_id.get(key)
+                            if procore_id:
+                                await api.attach_file_to_submittal(
+                                    project_id, procore_id, prostore_file_id
+                                )
+                                await asyncio.sleep(DELAY_BETWEEN_CALLS)
+                        uploaded_files[filename] = prostore_file_id
+                        errors = [e for e in errors if not e.startswith(f"{filename}:")]
+                    except Exception as retry_err:
+                        errors.append(f"{filename}: retry failed — {retry_err}")
+                except Exception as e:
+                    errors.append(f"{filename}: {e}")
+                    logger.error(f"Job {job_id}: error uploading {filename}: {e}")
+
+                ops_completed += 1
+                file_job_store.update_progress(job_id, uploaded_files=ops_completed, errors=errors)
 
         # === UPDATES ===
         DATE_FIELDS = {"government_received", "government_returned"}
@@ -355,6 +432,14 @@ async def process_sync_job(
                 "errors": len(errors),
             },
         )
+
+    finally:
+        if temp_dir and Path(temp_dir).exists():
+            try:
+                shutil.rmtree(temp_dir)
+                logger.info(f"Job {job_id}: cleaned up temp dir {temp_dir}")
+            except Exception as e:
+                logger.warning(f"Job {job_id}: failed to clean temp dir: {e}")
 
 
 # Keep old function for backwards compatibility with any in-flight jobs
