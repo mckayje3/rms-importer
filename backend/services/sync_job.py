@@ -11,7 +11,7 @@ from typing import Optional
 
 from database import file_job_store, baseline_store
 from services.procore_api import ProcoreAPI, RateLimitError
-from routers.auth import get_token
+from routers.auth import get_token, _refresh_session_token
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,12 @@ async def process_sync_job(
         temp_dir = str(Path(manifest[0]["temp_path"]).parent)
 
     try:
-        access_token = get_token(session_id)
+        # Refresh the access token at job start so a long-running unified job
+        # (creates → files → updates) doesn't fail later phases when the
+        # original token expires mid-flow. Falls back to stored token on
+        # refresh failure.
+        refreshed = await _refresh_session_token(session_id)
+        access_token = refreshed if refreshed else get_token(session_id)
         api = ProcoreAPI(access_token, company_id=company_id)
         rms_data = get_rms_data(rms_session_id)
 

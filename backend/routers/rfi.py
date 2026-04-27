@@ -9,7 +9,7 @@ from typing import Optional
 from services.rfi_parser import RFIParser
 from services.procore_api import ProcoreAPI, RateLimitError
 from models.rfi import RFIParseResult, RFICreateAction, RFIResponseAction, RFISyncPlan
-from routers.auth import get_token
+from routers.auth import get_token, _refresh_session_token
 from config import get_settings
 from database import file_job_store
 
@@ -334,9 +334,14 @@ async def execute_rfi_import(
         raise HTTPException(status_code=404, detail="Session not found")
 
     try:
-        access_token = get_token(x_auth_session)
+        get_token(x_auth_session)
     except HTTPException:
         raise HTTPException(status_code=401, detail="Invalid auth session")
+
+    # Refresh the token so the prep work below and the background job both
+    # start with a fresh token; falls back to stored token on refresh failure.
+    refreshed = await _refresh_session_token(x_auth_session)
+    access_token = refreshed if refreshed else get_token(x_auth_session)
 
     parse_result = _rfi_sessions[request.session_id]
     api = ProcoreAPI(access_token, company_id=request.company_id)
@@ -425,9 +430,14 @@ async def execute_rfi_import_with_files(
         raise HTTPException(status_code=404, detail="Session not found")
 
     try:
-        access_token = get_token(x_auth_session)
+        get_token(x_auth_session)
     except HTTPException:
         raise HTTPException(status_code=401, detail="Invalid auth session")
+
+    # Refresh the token so the prep work below and the background job both
+    # start with a fresh token; falls back to stored token on refresh failure.
+    refreshed = await _refresh_session_token(x_auth_session)
+    access_token = refreshed if refreshed else get_token(x_auth_session)
 
     parse_result = _rfi_sessions[request.session_id]
     api = ProcoreAPI(access_token, company_id=request.company_id)

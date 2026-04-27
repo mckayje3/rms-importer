@@ -69,38 +69,51 @@ async def callback(code: str = Query(...), state: str = Query(...)):
     )
 
 
-@router.post("/refresh")
-async def refresh_token(session_id: str):
-    """Refresh an expired access token."""
+async def _refresh_session_token(session_id: str) -> str | None:
+    """Refresh the stored access token using its refresh_token.
+
+    Returns the new access_token on success, None on failure (so callers can
+    fall back to the existing stored token without crashing).
+    """
     token_data = session_store.get_session(session_id)
     if not token_data:
-        raise HTTPException(status_code=401, detail="Invalid session")
+        return None
 
-    refresh_token = token_data.get("refresh_token")
+    refresh_tok = token_data.get("refresh_token")
+    if not refresh_tok:
+        return None
 
-    if not refresh_token:
-        raise HTTPException(status_code=401, detail="No refresh token available")
-
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            settings.procore_auth_url,
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
-                "client_id": settings.procore_client_id,
-                "client_secret": settings.procore_client_secret,
-            },
-        )
-
-        if response.status_code != 200:
-            raise HTTPException(status_code=401, detail="Failed to refresh token")
-
-        new_token_data = response.json()
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                settings.procore_auth_url,
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_tok,
+                    "client_id": settings.procore_client_id,
+                    "client_secret": settings.procore_client_secret,
+                },
+            )
+            if response.status_code != 200:
+                return None
+            new_token_data = response.json()
+    except Exception:
+        return None
 
     session_store.save_session(session_id, new_token_data)
+    return new_token_data.get("access_token")
+
+
+@router.post("/refresh")
+async def refresh_token(session_id: str):
+    """Refresh an expired access token (HTTP endpoint for the frontend)."""
+    new_token = await _refresh_session_token(session_id)
+    if not new_token:
+        raise HTTPException(status_code=401, detail="Failed to refresh token")
+    token_data = session_store.get_session(session_id) or {}
     return {
-        "access_token": new_token_data["access_token"],
-        "expires_in": new_token_data.get("expires_in"),
+        "access_token": new_token,
+        "expires_in": token_data.get("expires_in"),
     }
 
 
