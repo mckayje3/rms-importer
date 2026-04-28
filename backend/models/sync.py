@@ -142,7 +142,15 @@ class SyncExecuteResponse(BaseModel):
 
 
 class StoredSubmittal(BaseModel):
-    """Submittal data stored in baseline."""
+    """Submittal data stored in baseline.
+
+    Every field below either (a) identifies the record (section, item_no,
+    revision, procore_id) or (b) is compared against the next RMS export to
+    detect drift (everything in TRACKED_FIELDS in sync_service.py). Don't add
+    fields that aren't read for one of those two purposes — the baseline is
+    minimum-necessary by design, both for storage cost and for Procore
+    Marketplace compliance.
+    """
     section: str
     item_no: int
     revision: int

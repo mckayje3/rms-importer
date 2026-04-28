@@ -60,6 +60,7 @@ interface SyncViewProps {
   selectedFileCount: number;
   onExecute: (options: { creates: boolean; updates: boolean; dates: boolean }) => void;
   onBootstrap?: () => Promise<void>;
+  onResetData?: () => Promise<void>;
   onCancel: () => void;
   onDone?: () => void;
   isExecuting: boolean;
@@ -83,6 +84,7 @@ export function SyncView({
   selectedFileCount,
   onExecute,
   onBootstrap,
+  onResetData,
   onCancel,
   onDone,
   isExecuting,
@@ -92,6 +94,7 @@ export function SyncView({
   const [applyUpdates, setApplyUpdates] = useState(true);
   const [applyDates, setApplyDates] = useState(true);
   const [bootstrapping, setBootstrapping] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   const toggleSection = (section: string) => {
     setExpandedSection(expandedSection === section ? null : section);
@@ -633,6 +636,44 @@ export function SyncView({
           >
             Done
           </button>
+        </div>
+      )}
+
+      {/* Data & Privacy — visible when a baseline exists for this project */}
+      {onResetData && baseline.has_baseline && (
+        <div className="pt-4 border-t border-gray-200">
+          <details className="text-xs text-gray-500">
+            <summary className="cursor-pointer hover:text-gray-700">
+              Data &amp; Privacy
+            </summary>
+            <div className="mt-2 space-y-2 pl-2">
+              <p>
+                The app keeps a baseline of your last successful sync ({baseline.submittal_count} submittals,
+                {" "}{baseline.file_count} file references) so it can detect what changed
+                in your next RMS export. We only store fields we compare against —
+                see <code>docs/data-retention.md</code> for the full list.
+              </p>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!window.confirm(
+                    "Delete this project's stored baseline and sync history? " +
+                    "Procore data is unaffected, but the next sync will re-detect everything as new."
+                  )) return;
+                  setResetting(true);
+                  try {
+                    await onResetData();
+                  } finally {
+                    setResetting(false);
+                  }
+                }}
+                disabled={resetting || isExecuting}
+                className="text-red-600 hover:text-red-800 font-medium disabled:opacity-50"
+              >
+                {resetting ? "Resetting..." : "Reset Stored Data"}
+              </button>
+            </div>
+          </details>
         </div>
       )}
     </div>

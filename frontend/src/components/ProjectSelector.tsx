@@ -188,11 +188,15 @@ export function ProjectSelector({ onProjectSelect }: ProjectSelectorProps) {
               <p className="text-xs text-gray-500">Submittals</p>
             </div>
             <div>
-              <p className="text-2xl font-bold text-gray-900">{stats.spec_section_count}</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {stats.spec_section_count ?? "—"}
+              </p>
               <p className="text-xs text-gray-500">Spec Sections</p>
             </div>
             <div>
-              <p className="text-2xl font-bold text-gray-900">{stats.revision_count}</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {stats.revision_count ?? "—"}
+              </p>
               <p className="text-xs text-gray-500">Revisions</p>
             </div>
           </div>

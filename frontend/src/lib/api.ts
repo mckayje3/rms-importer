@@ -338,6 +338,14 @@ export const sync = {
     });
   },
 
+  deleteBaseline: async (
+    projectId: number
+  ): Promise<{ status: string; project_id: number }> => {
+    return fetchAPI(`/sync/projects/${projectId}/baseline`, {
+      method: "DELETE",
+    });
+  },
+
   filterFiles: async (
     projectId: number,
     sessionId: string,

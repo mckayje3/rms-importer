@@ -55,11 +55,17 @@ class ProcoreSubmittal(BaseModel):
 
 
 class ProcoreStats(BaseModel):
-    """Statistics about a Procore project's submittals."""
+    """Statistics about a Procore project's submittals.
+
+    spec_section_count and revision_count are Optional because the fast
+    stats path (Total header from a per_page=1 list call) returns only
+    submittal_count. The fallback path that walks every submittal does
+    populate them. Frontend renders "—" for None.
+    """
 
     submittal_count: int
-    spec_section_count: int
-    revision_count: int
+    spec_section_count: Optional[int] = None
+    revision_count: Optional[int] = None
     spec_sections: list[str] = []
 
 

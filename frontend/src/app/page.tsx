@@ -775,6 +775,19 @@ export default function Home() {
                 });
                 setStep("complete");
               }}
+              onResetData={async () => {
+                if (!project || !company || !rmsSession) return;
+                await sync.deleteBaseline(project.id);
+                // Re-analyze so the UI reflects the now-empty baseline.
+                const filenames = selectedFolderFiles.map((f) => f.name);
+                const fresh = await sync.analyze(
+                  project.id,
+                  rmsSession.session_id,
+                  company.id,
+                  filenames
+                );
+                setSyncAnalysis(fresh);
+              }}
               isExecuting={importing}
             />
           </div>

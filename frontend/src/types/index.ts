@@ -15,8 +15,10 @@ export interface ProcoreProject {
 
 export interface ProcoreStats {
   submittal_count: number;
-  spec_section_count: number;
-  revision_count: number;
+  // null when populated via the fast pagination-header path (the common case);
+  // the legacy full-fetch fallback fills these in.
+  spec_section_count: number | null;
+  revision_count: number | null;
   spec_sections: string[];
 }
 

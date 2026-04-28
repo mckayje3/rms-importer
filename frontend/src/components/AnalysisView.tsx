@@ -71,11 +71,11 @@ export function AnalysisView({
             </div>
             <div className="flex justify-between">
               <span className="text-sm text-purple-700">Spec Sections</span>
-              <span className="font-medium text-purple-900">{procoreStats.spec_section_count}</span>
+              <span className="font-medium text-purple-900">{procoreStats.spec_section_count ?? "—"}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-sm text-purple-700">Revisions</span>
-              <span className="font-medium text-purple-900">{procoreStats.revision_count}</span>
+              <span className="font-medium text-purple-900">{procoreStats.revision_count ?? "—"}</span>
             </div>
           </div>
         </div>

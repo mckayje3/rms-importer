@@ -100,6 +100,18 @@ class ProcoreAPI:
         )
         return response.json()
 
+    async def _get_with_headers(
+        self, endpoint: str, params: Optional[dict] = None
+    ) -> tuple[dict | list, "httpx.Headers"]:
+        """GET that also returns response headers (for Total / pagination)."""
+        response = await self._request_with_retry(
+            "get", endpoint,
+            headers=self._headers(),
+            params=params,
+            timeout=30.0,
+        )
+        return response.json(), response.headers
+
     async def _get_paginated(
         self, endpoint: str, params: Optional[dict] = None, per_page: int = 100
     ) -> list:
@@ -200,18 +212,42 @@ class ProcoreAPI:
         )
 
     async def get_submittal_stats(self, project_id: int) -> ProcoreStats:
-        """Get submittal statistics for a project."""
-        submittals = await self.get_submittals(project_id)
+        """Get submittal statistics for a project.
 
+        Uses Procore's Total pagination header from a per_page=1 list request
+        to get the count without pulling record data — one API call instead
+        of (count / 100) paginated calls. Procore Marketplace API guidelines
+        favor targeted queries over broad data pulls; this is the targeted
+        version. Spec section and revision counts are not populated on the
+        fast path because Procore has no listing endpoint that returns them
+        without iterating submittals.
+        """
+        try:
+            _, headers = await self._get_with_headers(
+                f"/rest/v1.0/projects/{project_id}/submittals",
+                params={"per_page": 1, "page": 1},
+            )
+            total_str = headers.get("Total") or headers.get("X-Total")
+            if total_str is not None:
+                count = int(total_str)
+                return ProcoreStats(
+                    submittal_count=count,
+                    spec_section_count=None,
+                    revision_count=None,
+                    spec_sections=[],
+                )
+        except (ValueError, TypeError, KeyError) as e:
+            logger.warning(f"Could not read Total header for stats, falling back: {e}")
+
+        # Fallback (header missing): full fetch. Should be rare.
+        submittals = await self.get_submittals(project_id)
         spec_sections = set()
         revision_count = 0
-
         for sub in submittals:
             if sub.specification_section:
                 spec_sections.add(sub.specification_section.number)
             if sub.revision > 0:
                 revision_count += 1
-
         return ProcoreStats(
             submittal_count=len(submittals),
             spec_section_count=len(spec_sections),
