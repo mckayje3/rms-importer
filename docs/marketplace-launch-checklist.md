@@ -25,7 +25,7 @@ Working document for shipping RMS Importer to the Procore Marketplace. Status up
 ### Support & contact
 
 - ☐ **Support email** — set up `support@<domain>` (forwards to a real inbox or ticket system). Reachable from the landing page footer, `RMS_Importer_User_Guide.md`, and the in-app help link (TBD).
-- ☐ **In-app help link** — small "Need help?" link in the app footer or header pointing to support email + user guide.
+- ☑ **In-app help link** — `<HelpFooter />` mounts on every authenticated screen; reads `NEXT_PUBLIC_SUPPORT_EMAIL` and `NEXT_PUBLIC_HELP_URL` from Vercel env. Hidden on auth screen. Update the Vercel env vars once the support email + help URL are decided.
 - ☐ **Replace `[Your support contact here]`** in `RMS_Importer_User_Guide.md` (line ~309) with the real address.
 
 ### Procore-side paperwork

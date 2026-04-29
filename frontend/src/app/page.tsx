@@ -18,6 +18,7 @@ import {
   ObservationsUpload,
   ObservationsReview,
   FolderPicker,
+  HelpFooter,
 } from "@/components";
 import { FileJobProgress } from "@/components/FileJobProgress";
 import { auth, projects as projectsApi, submittals, sync, setup, health, rfi as rfiApi, dailyLogs as dailyLogsApi, observations as observationsApi } from "@/lib/api";
@@ -1510,6 +1511,8 @@ export default function Home() {
           </div>
         )}
       </main>
+
+      <HelpFooter hidden={step === "auth"} />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 export { Header } from "./Header";
+export { HelpFooter } from "./HelpFooter";
 export { StepIndicator } from "./StepIndicator";
 export { FileUpload } from "./FileUpload";
 export { ProjectSelector } from "./ProjectSelector";
