@@ -44,6 +44,10 @@ export function HelpFooter({ hidden = false }: HelpFooterProps) {
           Cookies
         </a>
         <span className="text-gray-300">·</span>
+        <a href="/terms" className="hover:text-gray-700 hover:underline">
+          Terms
+        </a>
+        <span className="text-gray-300">·</span>
         <a
           href={`mailto:${SUPPORT_EMAIL}?subject=RMS%20Importer%20support`}
           className="hover:text-gray-700 hover:underline"

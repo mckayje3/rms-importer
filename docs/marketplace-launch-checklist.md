@@ -22,7 +22,7 @@ Working document for shipping RMS Importer to the Procore Marketplace. Status up
 - ☑ **Cookie policy** — generated via iubenda (same doc), hosted at `rms-importer.vercel.app/cookies`. Override URL via `NEXT_PUBLIC_COOKIE_URL`.
 - ☑ **iubenda Privacy Controls + Cookie Solution widget** — wired into `app/layout.tsx` with `beforeInteractive` strategy so the cookie banner and consent management load on every page. Override URL via `NEXT_PUBLIC_IUBENDA_WIDGET_URL`.
 - ◐ **iubenda scan: Google Fonts service** — flagged Apr 30, 2026. Either declare Google Fonts in iubenda's dashboard *or* drop `next/font/google` Geist imports from `app/layout.tsx` for system fonts. Pending decision.
-- ☐ **Terms of Service** — generate via iubenda the same way; route already pre-wired pattern (add `app/terms/page.tsx` mirroring `privacy/page.tsx`). Host at `<domain>/terms`.
+- ☑ **Terms of Service** — generated via Termly free tier (HTML embed format). Hosted at `rms-importer.vercel.app/terms` via a Server Component that renders `frontend/src/app/terms/content.html`. Termly's branding/attribution stays in the file per their free-tier license. If we ever upgrade to Termly PRO+ or migrate to Common Paper, swap the page to the iframe pattern (mirrors `app/privacy/page.tsx`) and add a `NEXT_PUBLIC_TERMS_URL` env var.
 - ☐ **Sub-processor list** — short page listing Vercel, Railway, Procore. (Required if you sign any DPA.)
 
 ### Support & contact
