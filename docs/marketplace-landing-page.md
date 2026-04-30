@@ -112,7 +112,7 @@ Yes. There's a "Reset Stored Data" button inside the app (per-project), or email
 - Cookie Policy → `/cookies`
 - Terms of Service → `/terms`
 - Status → `status.<domain>`
-- Support → `support@<domain>`
+- Support → `rms-support@thetestexperts.com`
 - © The Test Experts, LLC · 1000 Peachtree Ind Blvd, STE 6352, Suwanee, GA 30024
 
 ---

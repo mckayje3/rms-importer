@@ -117,7 +117,7 @@ No company-admin permissions required. No financial data accessed.
 
 ## Support
 
-- **Email:** `support@<domain>` *(replace before submitting)*
+- **Email:** `rms-support@thetestexperts.com`
 - **Documentation:** linked from the landing page
 - **Status page:** `status.<domain>` *(once UptimeRobot is set up)*
 - **Response SLA:** within 1 business day for support email *(adjust to a number you can actually hit)*

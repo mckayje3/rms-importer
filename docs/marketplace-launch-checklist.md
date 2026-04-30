@@ -27,9 +27,9 @@ Working document for shipping RMS Importer to the Procore Marketplace. Status up
 
 ### Support & contact
 
-- ☐ **Support email** — set up `support@<domain>` (forwards to a real inbox or ticket system). Reachable from the landing page footer, `RMS_Importer_User_Guide.md`, and the in-app help link (TBD).
-- ☑ **In-app help link** — `<HelpFooter />` mounts on every authenticated screen; reads `NEXT_PUBLIC_SUPPORT_EMAIL` and `NEXT_PUBLIC_HELP_URL` from Vercel env. Hidden on auth screen. Update the Vercel env vars once the support email + help URL are decided.
-- ☐ **Replace `[Your support contact here]`** in `RMS_Importer_User_Guide.md` (line ~309) with the real address.
+- ◐ **Support email** — chosen: `rms-support@thetestexperts.com` (decided 2026-04-30). **Pending:** create the inbox in The Test Experts cPanel; verify forwarding/ticketing if desired. Until it's live, links to it will bounce.
+- ☑ **In-app help link** — `<HelpFooter />` mounts on every authenticated screen; reads `NEXT_PUBLIC_SUPPORT_EMAIL` and `NEXT_PUBLIC_HELP_URL` from Vercel env. After the cPanel inbox is live, set `NEXT_PUBLIC_SUPPORT_EMAIL=rms-support@thetestexperts.com` in Vercel — no code change needed. (Default fallback in code is intentionally `support@example.com` so users don't get bouncebacks before the inbox exists.)
+- ☑ **Replace `[Your support contact here]`** in `RMS_Importer_User_Guide.md` — done.
 
 ### Procore-side paperwork
 
