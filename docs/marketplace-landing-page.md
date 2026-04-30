@@ -78,11 +78,25 @@ One button. The app creates new submittals, attaches your PDFs, updates fields, 
 
 ## Pricing
 
-> **TBD — pick one before publishing:**
-> - Free during beta (simplest)
-> - $X/month per active project
-> - $Y per project (one-time setup fee)
-> - Custom — Contact us
+### **$1,500 per active Procore project per year**
+
+Annual subscription. Includes:
+
+- Unlimited submittals, RFIs, daily logs, and observations imported per project
+- Unlimited file attachments
+- Weekly (or as-needed) sync runs
+- Email support — typical response within one business day
+- All future updates and new tool modules
+
+**Volume discount** for prime contractors running multiple jobs — contact us for pricing past four active projects.
+
+**Free during beta** for early adopters who agree to a short feedback call. Limited slots — contact us if interested.
+
+**ROI math:** A typical 2,000-submittal job represents roughly 100 hours of double-entry. At any defensible loaded contractor rate ($75-150/hr), the tool pays for itself before the first weekly sync.
+
+[Contact Sales] *(mailto button to `rms-support@thetestexperts.com` with subject "RMS Importer pricing")*
+
+> *Designer note:* render as a single price card with the headline, the bullet list, and the Contact Sales CTA. Volume discount and beta lines can be smaller text below the card.
 
 ---
 

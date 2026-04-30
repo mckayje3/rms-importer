@@ -107,11 +107,13 @@ No company-admin permissions required. No financial data accessed.
 
 ## Pricing
 
-> **TBD before submission.** Pick one:
-> - Free during beta
-> - Subscription per active project
-> - One-time per-project setup fee
-> - Custom
+**$1,500 per active Procore project per year.** Annual subscription, billed by invoice (manual ACH/check for v1; Stripe Checkout to be added once self-serve volume justifies it). Includes unlimited submittal/RFI/daily log/observation imports, unlimited file attachments, all future updates, and email support.
+
+Volume discount for 5+ active projects — contact sales.
+
+Free during beta for early adopters who provide a short feedback call.
+
+Billing model field on the marketplace listing form: **Subscription** (or "Contact for quote" if Procore's form requires it).
 
 ---
 

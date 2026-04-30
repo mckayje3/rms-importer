@@ -37,11 +37,7 @@ Working document for shipping RMS Importer to the Procore Marketplace. Status up
 - ☐ **Production app credentials** — verify `PROCORE_CLIENT_ID` / `PROCORE_CLIENT_SECRET` on Railway are the production set, not dev/sandbox.
 - ☐ **App listing copy** — drafted in `docs/marketplace-listing.md`. Needs your review + screenshots inserted.
 - ☐ **Security questionnaire** — Procore typically sends this with the application. Be ready to answer auth flow, data residency, encryption-in-transit, retention, deletion. Most answers are already in `docs/data-retention.md` and `docs/marketplace-overview.md`.
-- ☐ **Pricing decision** — pick one before submitting:
-  - Free during beta (simplest)
-  - Per-project monthly subscription (~$X/mo per active project)
-  - One-time per-project setup fee
-  - Custom (contact for quote)
+- ☑ **Pricing decision** — **$1,500 per active Procore project per year** (annual subscription). Volume discount past 4 projects (negotiated). Free during beta for early adopters with a feedback-call commitment. Billing via manual invoice (ACH / check) for v1; Stripe Checkout added once self-serve volume justifies it. Reflected in `marketplace-landing-page.md` and `marketplace-listing.md`.
 
 ---
 
