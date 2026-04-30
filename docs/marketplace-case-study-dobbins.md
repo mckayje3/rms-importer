@@ -80,6 +80,6 @@ Inspections (QC tests as Procore Inspections) is the next module on deck.
 
 ---
 
-*GlobalGo built the RMS Importer to solve its own dual-system problem on the Dobbins ARB project. It's now available to other USACE construction contractors via the Procore Marketplace.*
+*The RMS Importer was built to solve a dual-system problem on the Dobbins ARB project, where GlobalGo, LLC is the prime contractor. It is now operated and distributed as a SaaS by **The Test Experts, LLC** (Suwanee, GA) and available to other USACE construction contractors via the Procore Marketplace.*
 
 [Install from Procore Marketplace] [Contact us]

@@ -2,6 +2,9 @@
 
 A short summary of what the RMS Importer does, how it uses the Procore REST API, and how its design aligns with Procore's API Usage Guidelines.
 
+**SaaS operator:** The Test Experts, LLC · 1000 Peachtree Ind Blvd, STE 6352, Suwanee, GA 30024
+**Origin:** built initially for GlobalGo, LLC's USACE Dobbins ARB Security Forces Facility project (see `marketplace-case-study-dobbins.md`); productized and operated by The Test Experts.
+
 ## What the app does
 
 Government construction contractors working on USACE projects are required to record submittals, RFIs, daily logs, and QA deficiencies in **RMS** (Resident Management System, the government's tracking platform). The same project teams use **Procore** day-to-day for collaboration. Today this means double-entry — every submittal logged in RMS gets re-typed in Procore by hand.

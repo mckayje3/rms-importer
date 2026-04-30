@@ -107,12 +107,13 @@ Yes. There's a "Reset Stored Data" button inside the app (per-project), or email
 
 ## Footer
 
-- About GlobalGo
+- About The Test Experts
 - Privacy Policy → `/privacy`
+- Cookie Policy → `/cookies`
 - Terms of Service → `/terms`
 - Status → `status.<domain>`
 - Support → `support@<domain>`
-- © GlobalGo, LLC
+- © The Test Experts, LLC · 1000 Peachtree Ind Blvd, STE 6352, Suwanee, GA 30024
 
 ---
 

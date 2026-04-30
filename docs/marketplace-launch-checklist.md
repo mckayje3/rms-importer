@@ -84,4 +84,4 @@ Working document for shipping RMS Importer to the Procore Marketplace. Status up
 2. Pricing model + price point.
 3. Who owns customer support? Solo (mckayje3) or shared inbox?
 4. Are we OK ungating the app to non-USACE projects, or scoping the listing to government construction only?
-5. Is GlobalGo, LLC the entity on the Procore Partner agreement, or a different entity?
+5. ~~Is GlobalGo, LLC the entity on the Procore Partner agreement, or a different entity?~~ **Resolved 2026-04-30: The Test Experts, LLC** (1000 Peachtree Ind Blvd, STE 6352, Suwanee, GA 30024) is the SaaS operator for the marketplace listing. GlobalGo, LLC remains the prime contractor on the Dobbins case study but is not the SaaS entity.

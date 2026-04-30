@@ -2,6 +2,10 @@
 
 This document describes what data the RMS Importer stores about your Procore projects, why each piece is needed, how long it's kept, and how to delete it.
 
+**Data controller:** The Test Experts, LLC · 1000 Peachtree Ind Blvd, STE 6352, Suwanee, GA 30024.
+
+For the customer-facing privacy policy and your rights as a user, see [/privacy](https://rms-importer.vercel.app/privacy). This document is the engineering-side detail behind it.
+
 ## What we store
 
 ### 1. OAuth session tokens (`sessions` table)
