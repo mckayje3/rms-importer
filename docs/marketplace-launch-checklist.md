@@ -18,8 +18,9 @@ Working document for shipping RMS Importer to the Procore Marketplace. Status up
 
 ### Legal
 
-- ☐ **Privacy policy** — *not* `data-retention.md` (that's the engineering doc). Customer-facing one. Recommended path: generate via Termly/iubenda → lawyer review → host at `<domain>/privacy`. Cover: PII collected via OAuth, storage region (Railway US), GDPR/CCPA stance, breach notification timeline, deletion rights.
-- ☐ **Terms of Service** — same path as privacy. Host at `<domain>/terms`.
+- ☑ **Privacy policy** — generated via iubenda (doc 91796741), hosted at `rms-importer.vercel.app/privacy` (iframes the iubenda full-legal page). Override URL via `NEXT_PUBLIC_PRIVACY_URL` env var if you regenerate or migrate domains.
+- ☑ **Cookie policy** — generated via iubenda (same doc), hosted at `rms-importer.vercel.app/cookies`. Override URL via `NEXT_PUBLIC_COOKIE_URL`.
+- ☐ **Terms of Service** — generate via iubenda the same way; route already pre-wired pattern (add `app/terms/page.tsx` mirroring `privacy/page.tsx`). Host at `<domain>/terms`.
 - ☐ **Sub-processor list** — short page listing Vercel, Railway, Procore. (Required if you sign any DPA.)
 
 ### Support & contact

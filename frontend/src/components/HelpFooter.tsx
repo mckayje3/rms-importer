@@ -26,7 +26,7 @@ export function HelpFooter({ hidden = false }: HelpFooterProps) {
 
   return (
     <footer className="max-w-2xl mx-auto px-6 pb-6 pt-2">
-      <div className="flex items-center justify-center gap-4 text-xs text-gray-500">
+      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-gray-500">
         <a
           href={HELP_URL}
           target="_blank"
@@ -34,6 +34,14 @@ export function HelpFooter({ hidden = false }: HelpFooterProps) {
           className="hover:text-gray-700 hover:underline"
         >
           User Guide
+        </a>
+        <span className="text-gray-300">·</span>
+        <a href="/privacy" className="hover:text-gray-700 hover:underline">
+          Privacy
+        </a>
+        <span className="text-gray-300">·</span>
+        <a href="/cookies" className="hover:text-gray-700 hover:underline">
+          Cookies
         </a>
         <span className="text-gray-300">·</span>
         <a
