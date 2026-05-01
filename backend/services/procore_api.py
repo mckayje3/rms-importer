@@ -845,13 +845,48 @@ class ProcoreAPI:
     ) -> None:
         """Attach an already-uploaded file to an RFI.
 
-        Skips the GET-existing-attachments step (saves 1 API call per file).
-        The file filter already ensures we only upload new files, and Procore
-        handles duplicate prostore_file_ids gracefully.
+        PATCH /rfis/{id} with `prostore_file_ids` *replaces* the entire
+        attachment list — it does not append. So when more than one file
+        targets the same RFI, we have to GET the existing attachments,
+        merge our new id in, and PATCH the full list. Without the merge,
+        every file after the first overwrites its predecessor and the RFI
+        ends up with at most one attachment.
+
+        Procore stores RFI attachments on the question body
+        (`questions[0].attachments`); we also fall back to a top-level
+        `attachments` field defensively in case Procore returns either.
         """
+        # Get existing attachments from the RFI detail
+        rfi_detail = await self._get(
+            f"/rest/v1.0/projects/{project_id}/rfis/{rfi_id}"
+        )
+
+        existing_ids: list[int] = []
+        seen: set[int] = set()
+
+        def _collect(items):
+            for att in items or []:
+                att_id = att.get("id") if isinstance(att, dict) else None
+                if isinstance(att_id, int) and att_id not in seen:
+                    existing_ids.append(att_id)
+                    seen.add(att_id)
+
+        # Procore stores RFI attachments under the first question's
+        # `attachments` array. Defensively also check a top-level field.
+        questions = rfi_detail.get("questions") or []
+        if questions:
+            _collect((questions[0] or {}).get("attachments"))
+        _collect(rfi_detail.get("attachments"))
+
+        # Skip if already attached
+        if prostore_file_id in seen:
+            return
+
+        all_ids = existing_ids + [prostore_file_id]
+
         await self._patch(
             f"/rest/v1.0/projects/{project_id}/rfis/{rfi_id}",
-            {"rfi": {"prostore_file_ids": [prostore_file_id]}},
+            {"rfi": {"prostore_file_ids": all_ids}},
         )
 
     async def create_rfi_reply(self, project_id: int, rfi_id: int, reply_data: dict) -> dict:
