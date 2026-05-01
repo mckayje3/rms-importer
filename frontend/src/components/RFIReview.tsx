@@ -110,9 +110,16 @@ export function RFIReview({
   };
 
   const totalOperations = plan.creates.length + (applyResponseUpdates ? plan.response_updates.length : 0);
-  const nothingSelected = !applyCreates && !applyReplies && !applyResponseUpdates;
   const hasCreates = plan.creates.length > 0;
   const hasResponseUpdates = plan.response_updates.length > 0;
+  // Files alone are reason enough to enable Apply — non-response files attach
+  // to existing RFIs in the unified job's Phase 3 even when nothing else is
+  // happening. Without this, picking files but having no CSV-driven changes
+  // would hide the Apply button entirely.
+  const hasFilesToAttach = rfiFiles.length > 0;
+  const hasAnythingToDo = plan.has_changes || hasFilesToAttach;
+  const nothingSelected =
+    !applyCreates && !applyReplies && !applyResponseUpdates && !hasFilesToAttach;
 
   // Show progress if running
   if (jobId && jobStatus) {
@@ -236,11 +243,17 @@ export function RFIReview({
         </p>
       )}
 
-      {/* No changes */}
-      {!plan.has_changes && (
+      {/* No CSV-driven changes — but files may still need to attach */}
+      {!plan.has_changes && !hasFilesToAttach && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
           <p className="text-sm text-blue-700 font-medium">All RFIs are already in Procore with responses up to date.</p>
           <p className="text-xs text-blue-600 mt-1">Nothing to import.</p>
+        </div>
+      )}
+      {!plan.has_changes && hasFilesToAttach && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <p className="text-sm text-blue-700 font-medium">All RFIs are already in Procore with responses up to date.</p>
+          <p className="text-xs text-blue-600 mt-1">No CSV-driven changes — but the {rfiFiles.length} file{rfiFiles.length !== 1 ? "s" : ""} you selected will still upload and attach to the matching RFI{rfiFiles.length !== 1 ? "s" : ""} when you click Apply.</p>
         </div>
       )}
 
@@ -323,7 +336,7 @@ export function RFIReview({
         >
           Back
         </button>
-        {plan.has_changes && (
+        {hasAnythingToDo && (
           <button
             onClick={handleExecute}
             disabled={executing || nothingSelected}
