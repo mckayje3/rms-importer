@@ -19,6 +19,7 @@ import {
   ObservationsReview,
   FolderPicker,
   HelpFooter,
+  SyncResultSummary,
 } from "@/components";
 import { FileJobProgress } from "@/components/FileJobProgress";
 import { auth, projects as projectsApi, submittals, sync, setup, health, rfi as rfiApi, dailyLogs as dailyLogsApi, observations as observationsApi } from "@/lib/api";
@@ -79,6 +80,19 @@ export default function Home() {
   const [syncAnalysis, setSyncAnalysis] = useState<SyncAnalysisResponse | null>(null);
   const [syncResult, setSyncResult] = useState<SyncExecuteResponse | null>(null);
   const [fileJobId, setFileJobId] = useState<string | null>(null);
+  // What the user actually checked when they clicked Apply, snapshotted so the
+  // post-import summary can replay the right sections (creates/updates/dates).
+  const [syncAppliedOptions, setSyncAppliedOptions] = useState<{
+    creates: boolean;
+    updates: boolean;
+    dates: boolean;
+  } | null>(null);
+  // Flips true when the unified sync job finishes (FileJobProgress's
+  // onComplete fires). Drives whether SyncResultSummary renders.
+  const [syncJobFinished, setSyncJobFinished] = useState(false);
+  // Counts for the post-import summary header — pulled from the final job
+  // status when FileJobProgress reports completion.
+  const [syncFinalErrors, setSyncFinalErrors] = useState(0);
   // Folder of RMS files picked on the Upload step. Files are held as browser
   // File handles through Review and only transmitted on Apply (option B from
   // the wizard redesign). Page refresh forces a re-pick.
@@ -511,6 +525,9 @@ export default function Home() {
 
     setImporting(true);
     setError(null);
+    setSyncAppliedOptions(options);
+    setSyncJobFinished(false);
+    setSyncFinalErrors(0);
 
     try {
       // Only send file bytes for entries the backend confirmed are new and
@@ -1181,9 +1198,33 @@ export default function Home() {
                   projectId={project.id}
                   jobId={syncResult.update_job_id}
                   label="submittals"
-                  onComplete={() => {}}
+                  onComplete={async () => {
+                    // Pull the final job state once so we can show error counts
+                    // alongside the per-section breakdown.
+                    try {
+                      const finalStatus = await sync.getFileJobStatus(
+                        project.id,
+                        syncResult.update_job_id!
+                      );
+                      setSyncFinalErrors(
+                        finalStatus.result_summary?.errors ?? finalStatus.errors.length
+                      );
+                    } catch {
+                      // Non-fatal — summary still renders, just without error count
+                    }
+                    setSyncJobFinished(true);
+                  }}
                 />
               </div>
+            )}
+
+            {/* Post-import per-section breakdown (Submittals only) */}
+            {syncJobFinished && syncAnalysis && syncAppliedOptions && (
+              <SyncResultSummary
+                plan={syncAnalysis.plan}
+                appliedOptions={syncAppliedOptions}
+                errorCount={syncFinalErrors}
+              />
             )}
 
             {fileJobId && project && fileJobId !== syncResult?.update_job_id && (
@@ -1431,6 +1472,9 @@ export default function Home() {
                 setImportResult(null);
                 setSyncAnalysis(null);
                 setSyncResult(null);
+                setSyncAppliedOptions(null);
+                setSyncJobFinished(false);
+                setSyncFinalErrors(0);
                 setSelectedFolderFiles([]);
                 setFilterResult(null);
                 setRmsUploadResetKey((k) => k + 1);

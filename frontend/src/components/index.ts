@@ -9,6 +9,7 @@ export { AnalysisView } from "./AnalysisView";
 export { ContractorMapping } from "./ContractorMapping";
 export { ContractorMatchReview } from "./ContractorMatchReview";
 export { SyncView } from "./SyncView";
+export { SyncResultSummary } from "./SyncResultSummary";
 export { ProjectSetup } from "./ProjectSetup";
 export { ToolSelector } from "./ToolSelector";
 export { RFIUpload } from "./RFIUpload";
