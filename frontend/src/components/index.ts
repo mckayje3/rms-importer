@@ -10,6 +10,8 @@ export { ContractorMapping } from "./ContractorMapping";
 export { ContractorMatchReview } from "./ContractorMatchReview";
 export { SyncView } from "./SyncView";
 export { SyncResultSummary } from "./SyncResultSummary";
+export { RFIResultSummary } from "./RFIResultSummary";
+export { ObservationsResultSummary } from "./ObservationsResultSummary";
 export { ProjectSetup } from "./ProjectSetup";
 export { ToolSelector } from "./ToolSelector";
 export { RFIUpload } from "./RFIUpload";

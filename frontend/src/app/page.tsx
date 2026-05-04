@@ -20,6 +20,8 @@ import {
   FolderPicker,
   HelpFooter,
   SyncResultSummary,
+  RFIResultSummary,
+  ObservationsResultSummary,
 } from "@/components";
 import { FileJobProgress } from "@/components/FileJobProgress";
 import { auth, projects as projectsApi, submittals, sync, setup, health, rfi as rfiApi, dailyLogs as dailyLogsApi, observations as observationsApi } from "@/lib/api";
@@ -109,6 +111,10 @@ export default function Home() {
   const [rfiSession, setRfiSession] = useState<RFISession | null>(null);
   const [rfiAnalysis, setRfiAnalysis] = useState<RFIAnalyzeResponse | null>(null);
   const [rfiResult, setRfiResult] = useState<{ created: number; replies: number; responsesAdded: number; errors: string[] } | null>(null);
+  // Snapshotted file count at the moment we transition to Complete — used by
+  // RFIResultSummary's "files attached" line. We can't read rfiFolderFiles
+  // directly because it gets cleared at that same transition.
+  const [rfiFilesAttempted, setRfiFilesAttempted] = useState(0);
   const [rfiFolderFiles, setRfiFolderFiles] = useState<File[]>([]);
   const [rfiFilterResult, setRfiFilterResult] = useState<{ new_files: string[]; already_attached: string[]; unmapped_files: string[]; total_checked: number } | null>(null);
   const [rfiAnalyzing, setRfiAnalyzing] = useState(false);
@@ -973,6 +979,7 @@ export default function Home() {
               rfiFiles={rfiFolderFiles}
               onComplete={(result) => {
                 setRfiResult(result);
+                setRfiFilesAttempted(rfiFolderFiles.length);
                 setRfiFolderFiles([]);
                 setRfiFilterResult(null);
                 setStep("complete");
@@ -1341,6 +1348,15 @@ export default function Home() {
               </div>
             )}
 
+            {/* Per-record breakdown for the RFI sync we just ran */}
+            {rfiResult && rfiAnalysis && (
+              <RFIResultSummary
+                plan={rfiAnalysis.plan}
+                result={rfiResult}
+                filesAttempted={rfiFilesAttempted}
+              />
+            )}
+
             {dailyLogResult && (
               <div className="max-w-md mx-auto mb-6 text-left space-y-4">
                 <div className="bg-gray-50 rounded-lg p-4">
@@ -1436,6 +1452,14 @@ export default function Home() {
               </div>
             )}
 
+            {/* Per-record breakdown for the Observations sync we just ran */}
+            {observationsResult && observationsAnalysis && (
+              <ObservationsResultSummary
+                plan={observationsAnalysis.plan}
+                result={observationsResult}
+              />
+            )}
+
             {importResult && !syncResult && !rfiResult && (
               <div className="bg-gray-50 rounded-lg p-6 max-w-sm mx-auto mb-6">
                 <div className="space-y-3">
@@ -1483,6 +1507,7 @@ export default function Home() {
                 setRfiSession(null);
                 setRfiAnalysis(null);
                 setRfiResult(null);
+                setRfiFilesAttempted(0);
                 setRfiFolderFiles([]);
                 setRfiFilterResult(null);
                 setRfiUploadResetKey((k) => k + 1);
