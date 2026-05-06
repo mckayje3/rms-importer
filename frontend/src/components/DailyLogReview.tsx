@@ -189,7 +189,7 @@ export function DailyLogReview({
                 className="rounded border-gray-300 text-orange-500 focus:ring-orange-500"
               />
               <span className="text-sm text-gray-700">
-                Import {plan.equipment_creates} equipment entries
+                Import {plan.equipment_creates} equipment entr{plan.equipment_creates !== 1 ? "ies" : "y"}
               </span>
             </label>
           )}
@@ -202,7 +202,7 @@ export function DailyLogReview({
                 className="rounded border-gray-300 text-orange-500 focus:ring-orange-500"
               />
               <span className="text-sm text-gray-700">
-                Import {plan.labor_creates} labor entries
+                Import {plan.labor_creates} labor entr{plan.labor_creates !== 1 ? "ies" : "y"}
               </span>
             </label>
           )}
@@ -215,7 +215,7 @@ export function DailyLogReview({
                 className="rounded border-gray-300 text-orange-500 focus:ring-orange-500"
               />
               <span className="text-sm text-gray-700">
-                Import {plan.narrative_creates} narrative entries
+                Import {plan.narrative_creates} narrative entr{plan.narrative_creates !== 1 ? "ies" : "y"}
               </span>
             </label>
           )}

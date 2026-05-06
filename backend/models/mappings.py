@@ -36,7 +36,7 @@ SD_TYPE_MAP = {
     "11": "SD-11: CLOSEOUT SUBMTL",
 }
 
-# Reverse: type text from Register Report -> SD number
+# Reverse: type text from Submittal Register -> SD number
 TYPE_TEXT_TO_SD = {v.split(": ", 1)[1]: k for k, v in SD_TYPE_MAP.items()}
 # e.g., "PRECON SUBMTL" -> "01", "SHOP DRAWINGS" -> "02"
 

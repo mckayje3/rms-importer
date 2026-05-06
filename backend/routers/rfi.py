@@ -251,30 +251,40 @@ async def analyze_rfis(
             is_answered=rfi.is_answered,
         ))
 
-    # Check existing RFIs for missing responses (requires detail calls)
+    # Check existing RFIs for missing responses (requires detail calls).
+    # Run up to 3 detail fetches concurrently — these are read-only GETs, so
+    # we can go wider than the 1-req/sec cadence used for writes. Each call
+    # holds the semaphore for its duration plus a short delay, keeping the
+    # effective rate well under Procore's ~20-30 req/10s spike limit.
     if need_response_check:
         logger.info(f"Checking {len(need_response_check)} existing RFIs for missing responses")
-        for rms_rfi, procore_rfi in need_response_check:
-            try:
-                detail = await api._get(
-                    f"/rest/v1.0/projects/{project_id}/rfis/{procore_rfi.id}",
-                )
-                questions = detail.get("questions", [])
-                has_answer = any(
-                    bool(q.get("answers"))
-                    for q in questions
-                )
-                if not has_answer:
-                    response_updates.append(RFIResponseAction(
-                        rfi_number=rms_rfi.rfi_number,
-                        number=rms_rfi.number,
-                        procore_rfi_id=procore_rfi.id,
-                        response_body=rms_rfi.response_body,
-                        date_answered=rms_rfi.date_answered,
-                    ))
-                await asyncio.sleep(1)
-            except Exception as e:
-                logger.warning(f"Failed to check RFI {rms_rfi.rfi_number} for answers: {e}")
+        sem = asyncio.Semaphore(3)
+
+        async def check_one(rms_rfi, procore_rfi):
+            async with sem:
+                try:
+                    detail = await api._get(
+                        f"/rest/v1.0/projects/{project_id}/rfis/{procore_rfi.id}",
+                    )
+                    await asyncio.sleep(0.5)
+                    questions = detail.get("questions", [])
+                    has_answer = any(bool(q.get("answers")) for q in questions)
+                    if not has_answer:
+                        return RFIResponseAction(
+                            rfi_number=rms_rfi.rfi_number,
+                            number=rms_rfi.number,
+                            procore_rfi_id=procore_rfi.id,
+                            response_body=rms_rfi.response_body,
+                            date_answered=rms_rfi.date_answered,
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to check RFI {rms_rfi.rfi_number} for answers: {e}")
+                return None
+
+        results = await asyncio.gather(
+            *(check_one(r, p) for r, p in need_response_check)
+        )
+        response_updates.extend(r for r in results if r is not None)
 
     has_changes = len(creates) > 0 or len(response_updates) > 0
     parts = []
@@ -300,25 +310,39 @@ async def analyze_rfis(
 
 
 async def _get_rfi_manager_id(api: ProcoreAPI, project_id: int) -> Optional[int]:
-    """Get the RFI manager ID for the project."""
+    """Pick an RFI manager for newly-created RFIs.
+
+    Uses the most common manager across existing RFIs on the project. Falls
+    back to the currently logged-in user only when the project has no
+    existing RFIs (or none of them have a manager set). This way, RFIs
+    created via the importer inherit whoever already manages the project's
+    RFIs, rather than whoever happens to be running the app.
+    """
+    from collections import Counter
+
+    try:
+        raw = await api._get(
+            f"/rest/v1.0/projects/{project_id}/rfis",
+            params={"per_page": 100},
+        )
+        if raw:
+            mgr_ids = [
+                r["rfi_manager"]["id"]
+                for r in raw
+                if isinstance(r.get("rfi_manager"), dict) and r["rfi_manager"].get("id")
+            ]
+            if mgr_ids:
+                most_common_id, _ = Counter(mgr_ids).most_common(1)[0]
+                return most_common_id
+    except Exception as e:
+        logger.warning(f"Failed to get rfi_manager from existing RFIs: {e}")
+
     try:
         me = await api._get("/rest/v1.0/me")
         if me and me.get("id"):
             return me["id"]
     except Exception as e:
         logger.warning(f"Failed to get current user via /me: {e}")
-
-    try:
-        raw = await api._get(
-            f"/rest/v1.0/projects/{project_id}/rfis",
-            params={"per_page": 1},
-        )
-        if raw and len(raw) > 0:
-            mgr = raw[0].get("rfi_manager")
-            if mgr and mgr.get("id"):
-                return mgr["id"]
-    except Exception as e:
-        logger.warning(f"Failed to get rfi_manager from existing RFIs: {e}")
 
     return None
 

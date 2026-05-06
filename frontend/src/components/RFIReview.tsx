@@ -232,14 +232,14 @@ export function RFIReview({
 
       {!hasCreates && !hasResponseUpdates && plan.already_exist > 0 && (
         <p className="text-sm text-gray-500">
-          {plan.already_exist} RFI(s) already exist in Procore with responses up to date.
+          {plan.already_exist} RFI{plan.already_exist !== 1 ? "s" : ""} already exist in Procore with responses up to date.
         </p>
       )}
 
       {plan.already_exist > 0 && (hasCreates || hasResponseUpdates) && (
         <p className="text-sm text-gray-500">
           {plan.already_exist - plan.response_updates.length > 0 &&
-            `${plan.already_exist - plan.response_updates.length} RFI(s) already up to date in Procore.`}
+            `${plan.already_exist - plan.response_updates.length} RFI${plan.already_exist - plan.response_updates.length !== 1 ? "s" : ""} already up to date in Procore.`}
         </p>
       )}
 
@@ -271,7 +271,7 @@ export function RFIReview({
                   className="rounded border-gray-300 text-orange-500 focus:ring-orange-500"
                 />
                 <span className="text-sm text-gray-700">
-                  Create {plan.creates.length} new RFI(s)
+                  Create {plan.creates.length} new RFI{plan.creates.length !== 1 ? "s" : ""}
                 </span>
               </label>
               <label className="flex items-center gap-2 ml-6">
@@ -297,7 +297,7 @@ export function RFIReview({
                 className="rounded border-gray-300 text-orange-500 focus:ring-orange-500"
               />
               <span className="text-sm text-gray-700">
-                Add {plan.response_updates.length} response(s) to existing RFIs
+                Add {plan.response_updates.length} response{plan.response_updates.length !== 1 ? "s" : ""} to existing RFIs
               </span>
             </label>
           )}

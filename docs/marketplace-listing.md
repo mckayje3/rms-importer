@@ -33,7 +33,7 @@ Push submittals, RFIs, daily logs, and QAQC deficiencies from RMS into Procore i
 
 If your project requires the government's RMS (Resident Management System) and your team runs Procore for day-to-day collaboration, you've been paying the double-entry tax: every submittal, every QA code, every transmittal PDF logged twice. On a typical 2,000-submittal job, that's 100+ hours of pure re-typing before anyone touches Procore for actual coordination.
 
-The RMS Importer eliminates that. Export your standard RMS reports (Submittal Register, Transmittal Report, RFI Report, QC daily logs, QAQC Deficiencies — whichever ones apply), drop them into the app, review a diff against what's already in Procore, and apply.
+The RMS Importer eliminates that. Export your standard RMS reports (Submittal Register, Transmittal Log, RFI Report, QC daily logs, QAQC Deficiencies — whichever ones apply), drop them into the app, review a diff against what's already in Procore, and apply.
 
 ### What it imports
 

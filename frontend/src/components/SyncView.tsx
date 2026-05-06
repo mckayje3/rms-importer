@@ -552,7 +552,7 @@ export function SyncView({
                 className="w-full flex items-center justify-between p-4 bg-orange-50 hover:bg-orange-100 transition-colors"
               >
                 <span className="font-medium text-orange-800">
-                  {plan.flags.length} Items Removed (Flagged for Review)
+                  {plan.flags.length} Item{plan.flags.length !== 1 ? "s" : ""} Flagged for Review
                 </span>
                 <svg
                   className={`w-5 h-5 text-orange-600 transition-transform ${
@@ -568,8 +568,8 @@ export function SyncView({
               {expandedSection === "flags" && (
                 <div className="p-4 border-t border-orange-200 max-h-64 overflow-y-auto">
                   <p className="text-sm text-orange-700 mb-3">
-                    These items exist in Procore but were not in the latest RMS export.
-                    They will be flagged for manual review - not automatically deleted.
+                    These items exist in Procore but aren't in the latest RMS export.
+                    They are flagged for manual review.
                   </p>
                   <ul className="space-y-1 text-sm font-mono">
                     {plan.flags.map((f) => (

@@ -9,7 +9,7 @@ Instead of querying Procore to detect changes, we compare new RMS exports agains
 ## User Workflow
 
 ### First Import (Full Migration)
-1. User uploads two CSVs on the Upload step (Submittal Register Report, Transmittal Report) and (optionally) picks the RMS Files folder.
+1. User uploads two CSVs on the Upload step (Submittal Register, Transmittal Log) and (optionally) picks the RMS Files folder.
 2. App parses, computes the plan, and on Apply runs the unified job: creates all submittals → uploads + attaches files → applies field updates → saves baseline.
 
 ### Subsequent Syncs
@@ -347,8 +347,8 @@ Three-step wizard: **Upload → Review → Apply**. All inputs are collected on 
 ┌─────────────────────────────────────────────────────────────┐
 │  Upload RMS Files                                           │
 ├─────────────────────────────────────────────────────────────┤
-│  [Submittal Register Report.csv]   ✓ Uploaded               │
-│  [Transmittal Report.csv]          ✓ Uploaded               │
+│  [Submittal Register.csv]          ✓ Uploaded               │
+│  [Transmittal Log.csv]             ✓ Uploaded               │
 │                                                             │
 │  [Upload & Parse Files]                                     │
 │                                                             │

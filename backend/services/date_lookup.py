@@ -1,4 +1,4 @@
-"""Date lookup service - maps Transmittal Report dates to submittals."""
+"""Date lookup service - maps Transmittal Log dates to submittals."""
 from datetime import date
 from typing import Optional
 from dataclasses import dataclass
@@ -8,20 +8,20 @@ from models.rms import TransmittalReportEntry
 
 @dataclass
 class SubmittalDates:
-    """Dates for a submittal from Transmittal Report."""
+    """Dates for a submittal from Transmittal Log."""
     government_received: Optional[date] = None  # Date In
     government_returned: Optional[date] = None  # Date Out
 
 
 class DateLookup:
     """
-    Builds a lookup table from Transmittal Report entries.
+    Builds a lookup table from Transmittal Log entries.
 
     Maps match keys to their date fields.
     Match key format: "{Section}|{ItemNo}|{Revision}"
 
     Example:
-        Transmittal Report header:
+        Transmittal Log header:
             "Transmittal No 03 30 00-4.1  Date In: 12/01/2025  Date Out: 12/10/2025"
         Data row:
             15, Description, ..., GA, B

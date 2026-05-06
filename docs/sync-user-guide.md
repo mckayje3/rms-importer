@@ -12,19 +12,19 @@ This guide walks through updating Procore submittal data from RMS using the web 
 
 Export two CSV files from RMS plus (optionally) a folder of transmittal PDFs.
 
-### Submittal Register Report (required)
+### Submittal Register (required)
 
 1. In RMS, go to **Contract Reports > Submit > Submittal Register**
 2. Click **Preview**, then **Save** as **CSV**
-3. Save as `Submittal Register Report.csv`
+3. Save as `Submittal Register.csv`
 
 This single file replaces the older Submittal Register + Submittal Assignments combo. It carries all submittals with paragraph references, classifications (Info), and types.
 
-### Transmittal Report (required for revisions/dates/QA codes)
+### Transmittal Log (required for revisions/dates/QA codes)
 
 1. In RMS, go to **Contract Reports > Submit > Transmittal Log**
 2. Double-click **Transmittal Log**, click **Preview**, then **Save** as **CSV**
-3. Save as `Transmittal Report.csv`
+3. Save as `Transmittal Log.csv`
 
 ### RMS Files folder (optional — only if uploading PDFs this run)
 
@@ -62,7 +62,7 @@ Production: open the deployed URL (Vercel) or use the Procore embedded app.
 
 This is the only step where you provide inputs. Two things happen here:
 
-1. **Upload the two CSVs** (Register Report, Transmittal Report) and click **Upload & Parse Files**.
+1. **Upload the two CSVs** (Submittal Register, Transmittal Log) and click **Upload & Parse Files**.
 2. **(Optional) Pick the RMS Files folder.** A "Select RMS Files Folder" button appears below the parse summary once the CSVs are accepted. Click it and pick the folder of transmittal PDFs.
    - The app immediately checks each filename against the project baseline and shows a count: `N new files to upload, M already uploaded, K unrecognized`. **No bytes are uploaded yet** — file handles are held in the browser until you confirm on the next step.
 3. Click **Continue to Review**.
@@ -135,7 +135,7 @@ Normal for projects with 2000+ submittals. Wait 30-60 seconds.
 ## Data Flow Summary
 
 ```
-RMS CSVs (Register + Transmittal Report) + RMS Files folder
+RMS CSVs (Submittal Register + Transmittal Log) + RMS Files folder
     ↓
 Upload Step: parse CSVs, filename-check folder against baseline
     ↓
@@ -151,8 +151,8 @@ Complete Step: live progress, then summary
 
 | File | Provides |
 |------|----------|
-| Submittal Register Report | Section, item number, title, type, paragraph, QC code, Info code, status |
-| Transmittal Report | Revisions, government received/returned dates, QA codes (authoritative) |
+| Submittal Register | Section, item number, title, type, paragraph, QC code, Info code, status |
+| Transmittal Log | Revisions, government received/returned dates, QA codes (authoritative) |
 | RMS Files folder | Transmittal PDFs to upload to Procore Documents and attach to submittals |
 
 ### QA Code → Procore Status Mapping

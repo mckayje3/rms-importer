@@ -28,8 +28,8 @@ async def upload_rms_files(
     """
     Upload and parse RMS export files.
 
-    register_report (Register Report CSV) is required.
-    transmittal_report is optional (adds revisions, dates, QA codes).
+    register_report (Submittal Register CSV) is required.
+    transmittal_report (Transmittal Log CSV) is optional — adds revisions, dates, QA codes.
     """
     register_report_content = await register_report.read()
     report_content = await transmittal_report.read() if transmittal_report else None

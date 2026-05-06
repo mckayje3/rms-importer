@@ -8,7 +8,7 @@ from .mappings import map_status, map_sd_to_type
 
 
 class RMSSubmittal(BaseModel):
-    """Submittal from RMS Register Report."""
+    """Submittal from RMS Submittal Register."""
 
     section: str  # Spec section (e.g., "01 50 00")
     item_no: int  # Item number
@@ -39,7 +39,7 @@ class RMSSubmittal(BaseModel):
 
 
 class TransmittalReportEntry(BaseModel):
-    """Entry from Transmittal Report (QA codes, dates, and revision info)."""
+    """Entry from Transmittal Log (QA codes, dates, and revision info)."""
 
     section: str  # Spec section (e.g., "01 01 00")
     transmittal_no: int  # Transmittal number within section

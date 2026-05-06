@@ -17,7 +17,7 @@ export function RMSUpload({ onUploadComplete, onBack }: RMSUploadProps) {
   const [parseResult, setParseResult] = useState<RMSSession | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const canUpload = registerReportFile !== null;
+  const canUpload = registerReportFile !== null && reportFile !== null;
 
   const handleUpload = async () => {
     if (!canUpload) return;
@@ -55,14 +55,15 @@ export function RMSUpload({ onUploadComplete, onBack }: RMSUploadProps) {
           RMS Export Files
         </h3>
         <p className="text-sm text-blue-700">
-          Upload RMS export files below. The <strong>Register Report</strong> is required.
-          The Transmittal Report adds revision tracking and historical QA codes.
+          Upload both RMS export files below. The <strong>Submittal Register</strong> provides
+          the master submittal list; the <strong>Transmittal Log</strong> adds revisions, dates,
+          and historical QA codes.
         </p>
       </div>
 
       <div className="space-y-4">
         <FileUpload
-          label="Submittal Register Report (Required)"
+          label="Submittal Register (Required)"
           description="All submittals with classifications, paragraph references, and status codes."
           accept=".csv"
           file={registerReportFile}
@@ -70,7 +71,7 @@ export function RMSUpload({ onUploadComplete, onBack }: RMSUploadProps) {
         />
 
         <FileUpload
-          label="Transmittal Report (Optional)"
+          label="Transmittal Log (Required)"
           description="Adds revisions, dates, and historical QA codes for all transmittals"
           accept=".csv"
           file={reportFile}

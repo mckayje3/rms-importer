@@ -31,7 +31,7 @@ A 2,000-submittal job means **roughly 100+ hours of pure data re-entry** before 
 ## How it works (3 steps)
 
 ### 1. Export from RMS
-Two CSVs (Submittal Register, Transmittal Report) and your folder of transmittal PDFs. Standard exports — no special configuration.
+Two CSVs (Submittal Register, Transmittal Log) and your folder of transmittal PDFs. Standard exports — no special configuration.
 
 ### 2. Review the diff
 The app compares your export against what's already in Procore and shows you exactly what will change: new submittals, QA code updates, date corrections, files to attach. Nothing has been touched yet.

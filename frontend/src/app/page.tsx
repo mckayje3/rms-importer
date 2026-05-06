@@ -240,7 +240,7 @@ export default function Home() {
         setProcoreStats(stats);
         setStep("project-setup");
       } catch (err) {
-        setError("Failed to auto-select project from Procore context");
+        setError("Couldn't load project automatically — please pick it manually below.");
         console.error(err);
       } finally {
         setAutoSelectingProject(false);
@@ -388,6 +388,7 @@ export default function Home() {
     selectedProject: ProcoreProject,
     stats: ProcoreStats
   ) => {
+    setError(null);
     setCompany(selectedCompany);
     setProject(selectedProject);
     setProcoreStats(stats);
@@ -395,6 +396,7 @@ export default function Home() {
   };
 
   const handleSetupComplete = (config: ProjectConfigData) => {
+    setError(null);
     setProjectConfig(config);
     setStep("select-tool");
   };
@@ -593,7 +595,7 @@ export default function Home() {
               Connect to Procore
             </h2>
             <p className="text-gray-600 mb-8 max-w-md mx-auto">
-              Sign in with your Procore account to start importing submittal data from RMS.
+              Sign in with your Procore account to start importing data from RMS.
             </p>
             <button
               onClick={handleLogin}

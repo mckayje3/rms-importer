@@ -22,7 +22,7 @@ class RMSParser:
     ) -> RMSParseResult:
         """Parse RMS export files.
 
-        register_report_bytes is required (Register Report CSV).
+        register_report_bytes is required (Submittal Register CSV).
         transmittal_report_bytes is optional (adds revisions, dates, QA codes).
         """
         errors = []
@@ -57,7 +57,7 @@ class RMSParser:
     def _parse_register_report(
         self, file_bytes: bytes
     ) -> tuple[list[RMSSubmittal], list[str]]:
-        """Parse Submittal Register Report CSV.
+        """Parse Submittal Register CSV.
 
         Hierarchical format with section headers and data rows:
         - Section header: "Section 03 30 00" or "Section 03 30 00 CAST-IN-PLACE CONCRETE"
@@ -128,10 +128,10 @@ class RMSParser:
                         submittals.append(submittal)
 
                     except Exception as e:
-                        errors.append(f"Register Report row {row_num}: {str(e)}")
+                        errors.append(f"Submittal Register row {row_num}: {str(e)}")
 
         except Exception as e:
-            errors.append(f"Failed to parse Register Report: {str(e)}")
+            errors.append(f"Failed to parse Submittal Register: {str(e)}")
 
         return submittals, errors
 
@@ -139,7 +139,7 @@ class RMSParser:
         self, file_bytes: bytes
     ) -> tuple[list[TransmittalReportEntry], list[str]]:
         """
-        Parse Transmittal Report (CSV or Excel, hierarchical format).
+        Parse Transmittal Log (CSV or Excel, hierarchical format).
 
         The report alternates between transmittal header rows and item data rows:
         - Header row: "Transmittal No 03 30 00-2.1  Date In: ..."
@@ -158,7 +158,7 @@ class RMSParser:
     def _parse_transmittal_report_csv(
         self, text: str
     ) -> tuple[list[TransmittalReportEntry], list[str]]:
-        """Parse Transmittal Report from CSV format."""
+        """Parse Transmittal Log from CSV format."""
         import csv
         from datetime import datetime
 
@@ -227,7 +227,7 @@ class RMSParser:
     def _parse_transmittal_report_xlsx(
         self, file_bytes: bytes
     ) -> tuple[list[TransmittalReportEntry], list[str]]:
-        """Parse Transmittal Report from Excel format."""
+        """Parse Transmittal Log from Excel format."""
         errors = []
         entries = []
 
@@ -298,7 +298,7 @@ class RMSParser:
             wb.close()
 
         except Exception as e:
-            errors.append(f"Failed to parse Transmittal Report: {str(e)}")
+            errors.append(f"Failed to parse Transmittal Log: {str(e)}")
 
         return entries, errors
 

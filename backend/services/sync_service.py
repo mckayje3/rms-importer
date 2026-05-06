@@ -89,7 +89,7 @@ class SyncService:
         """Create a plan to import everything (no baseline exists)."""
         plan = SyncPlan(mode=SyncMode.FULL_MIGRATION)
 
-        # Build lookups from Transmittal Report
+        # Build lookups from Transmittal Log
         date_lookup = DateLookup(rms_data.transmittal_report)
         info_lookup = self._build_info_lookup(rms_data)
         qa_lookup = self._build_qa_code_lookup(rms_data.transmittal_report)
@@ -118,7 +118,7 @@ class SyncService:
                 government_returned=dates.government_returned.isoformat() if dates and dates.government_returned else None,
             ))
 
-        # Add revisions from Transmittal Report
+        # Add revisions from Transmittal Log
         # Group report entries by (section, item_no, revision) to deduplicate
         seen_revisions = set()
         for entry in rms_data.transmittal_report:
@@ -341,7 +341,7 @@ class SyncService:
         self,
         report_entries: list[TransmittalReportEntry],
     ) -> dict[str, str]:
-        """Build lookup from submittal key to QA code from Transmittal Report."""
+        """Build lookup from submittal key to QA code from Transmittal Log."""
         lookup = {}
         for entry in report_entries:
             if entry.qa_code:
@@ -357,7 +357,7 @@ class SyncService:
         """Convert RMS parsed data to StoredSubmittal format."""
         result = {}
 
-        # Build QA code lookup from Transmittal Report (authoritative source)
+        # Build QA code lookup from Transmittal Log (authoritative source)
         qa_lookup = self._build_qa_code_lookup(rms_data.transmittal_report)
 
         # Base submittals (revision 0)
@@ -383,7 +383,7 @@ class SyncService:
                 government_returned=dates.government_returned.isoformat() if dates and dates.government_returned else None,
             )
 
-        # Revisions from Transmittal Report
+        # Revisions from Transmittal Log
         seen_revisions = set()
         for entry in rms_data.transmittal_report:
             if entry.revision > 0:
