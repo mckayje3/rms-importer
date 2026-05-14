@@ -114,7 +114,7 @@ export function FileJobProgress({
         </h4>
         {isRunning && (
           <span className="text-xs text-purple-600">
-            You can navigate away — this will continue in the background
+            Safe to navigate away — track progress under Recent imports
           </span>
         )}
       </div>

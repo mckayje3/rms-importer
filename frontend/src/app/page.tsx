@@ -22,6 +22,7 @@ import {
   SyncResultSummary,
   RFIResultSummary,
   ObservationsResultSummary,
+  ImportHistory,
 } from "@/components";
 import { FileJobProgress } from "@/components/FileJobProgress";
 import { auth, projects as projectsApi, submittals, sync, setup, health, rfi as rfiApi, dailyLogs as dailyLogsApi, observations as observationsApi } from "@/lib/api";
@@ -648,6 +649,22 @@ export default function Home() {
               Choose which RMS data you want to import into Procore.
             </p>
             <ToolSelector onSelect={handleToolSelect} />
+            {project && (
+              <div className="mt-8">
+                <h3 className="text-sm font-medium text-gray-700 mb-2">
+                  Recent imports
+                </h3>
+                <ImportHistory
+                  projectId={project.id}
+                  onResumeJob={(job) => {
+                    // Drop the user back on the Complete page so they can
+                    // watch the live FileJobProgress for this run.
+                    setFileJobId(job.id);
+                    setStep("complete");
+                  }}
+                />
+              </div>
+            )}
           </div>
         );
 
@@ -1118,7 +1135,7 @@ export default function Home() {
             </h2>
             <p className="text-gray-600 mb-6">
               {syncResult?.update_job_id
-                ? "Your sync is running in the background. You can navigate away safely."
+                ? "Your sync is running in the background. Safe to navigate away — you'll find it under Recent imports on the Tool Select screen."
                 : rfiResult
                   ? "Your RFIs have been imported to Procore."
                   : dailyLogResult
