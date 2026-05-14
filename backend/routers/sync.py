@@ -277,6 +277,7 @@ async def execute_sync(
         session_id=x_auth_session,
         manifest=[],  # Not needed — job rebuilds plan from RMS data
         total_files=total_ops,
+        job_type="submittals",
     )
 
     asyncio.create_task(process_sync_job(
@@ -377,6 +378,7 @@ async def add_existing_files(
         if filename not in data.get("files", {}):
             data.setdefault("files", {})[filename] = {
                 "filename": filename,
+                "attached_to": [],
                 "uploaded": True,
                 "procore_file_id": None,
             }
@@ -413,15 +415,21 @@ async def filter_files(
     """
     Check which files are new vs already uploaded.
 
-    Compares filenames against the baseline's uploaded files list.
-    Also checks which files can be mapped to submittals.
+    A file is "already uploaded" only when the baseline has it AND its
+    `attached_to` set covers every submittal the Transmittal Log maps it to.
+    A file with the right name in the baseline but missing some attachments
+    (e.g. a new revision added after the file was first uploaded) is treated
+    as "new" so the sync job re-runs the upload+attach phase for it. The
+    upload itself is cheap — Procore returns the existing prostore_file_id
+    via the dedupe path — and the per-submittal attach call is idempotent.
+
     No Procore API calls — fast, local-only operation.
     """
     # Get baseline
     baseline = baseline_store.get_baseline(str(project_id))
-    baseline_files = set()
+    baseline_files: dict[str, dict] = {}
     if baseline and baseline.get("data", {}).get("files"):
-        baseline_files = set(baseline["data"]["files"].keys())
+        baseline_files = baseline["data"]["files"]
 
     # Get RMS data for file mapping
     try:
@@ -432,21 +440,37 @@ async def filter_files(
             detail="RMS session not found. Upload RMS files first.",
         )
 
-    # Filter: new vs already uploaded
-    new_files = [f for f in request.filenames if f not in baseline_files]
-    already_uploaded = [f for f in request.filenames if f in baseline_files]
-
-    # Check which new files can be mapped to submittals
     _project_config = project_config_store.get_config(str(project_id))
     _config_data = _project_config["config_data"] if _project_config else None
     sync_service = SyncService(str(project_id), "", config=_config_data)
 
-    file_to_keys = sync_service.map_files_to_submittals(new_files, rms_data)
-    mapped_files = [f for f in new_files if f in file_to_keys]
-    unmapped_files = [f for f in new_files if f not in file_to_keys]
+    # Map every requested filename against the Transmittal Log; the result
+    # tells us which submittals each file is expected to attach to.
+    file_to_keys = sync_service.map_files_to_submittals(
+        request.filenames, rms_data,
+    )
+
+    new_files: list[str] = []
+    already_uploaded: list[str] = []
+    unmapped_files: list[str] = []
+    for f in request.filenames:
+        expected_keys = file_to_keys.get(f)
+        if not expected_keys:
+            unmapped_files.append(f)
+            continue
+        baseline_entry = baseline_files.get(f)
+        if not baseline_entry:
+            new_files.append(f)
+            continue
+        attached_to = set(baseline_entry.get("attached_to") or [])
+        if set(expected_keys).issubset(attached_to):
+            already_uploaded.append(f)
+        else:
+            # File is in Procore but missing some attachments — re-run it.
+            new_files.append(f)
 
     return {
-        "new_files": mapped_files,
+        "new_files": new_files,
         "already_uploaded": already_uploaded,
         "unmapped_files": unmapped_files,
         "total_checked": len(request.filenames),
@@ -553,6 +577,7 @@ async def execute_sync_with_files(
         session_id=x_auth_session,
         manifest=manifest,
         total_files=total_ops,
+        job_type="submittals",
     )
 
     asyncio.create_task(process_sync_job(
@@ -609,6 +634,7 @@ async def get_file_job_status(
         "started_at": job["started_at"],
         "completed_at": job["completed_at"],
         "result_summary": job["result_summary"],
+        "job_type": job.get("job_type"),
     }
 
 

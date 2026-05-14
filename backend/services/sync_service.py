@@ -492,8 +492,15 @@ class SyncService:
         rms_data: RMSParseResult,
         procore_ids: dict[str, int],
         uploaded_files: dict[str, int],
+        file_attachments: Optional[dict[str, list[str]]] = None,
     ) -> None:
-        """Save a new baseline after successful sync."""
+        """Save a new baseline after successful sync.
+
+        `file_attachments` maps filename -> submittal_keys the file was attached
+        to in this run. Persisted on the file row so a later sync can detect
+        whether a file already-uploaded to Procore Documents still needs to be
+        attached to additional submittals (e.g. a new revision added later).
+        """
         date_lookup = DateLookup(rms_data.transmittal_report)
         info_lookup = self._build_info_lookup(rms_data)
 
@@ -504,13 +511,13 @@ class SyncService:
             if key in submittals:
                 submittals[key].procore_id = procore_id
 
-        # Convert to dict for storage
+        file_attachments = file_attachments or {}
         data = {
             "submittals": {k: v.model_dump() for k, v in submittals.items()},
             "files": {
                 filename: {
                     "filename": filename,
-                    "submittal_key": "",  # TODO: track which submittal
+                    "attached_to": sorted(set(file_attachments.get(filename, []))),
                     "uploaded": True,
                     "procore_file_id": file_id,
                 }
@@ -530,8 +537,14 @@ class SyncService:
         creates: dict[str, int],  # key -> procore_id
         updates: list[str],  # keys that were updated
         uploaded_files: dict[str, int],  # filename -> file_id
+        file_attachments: Optional[dict[str, list[str]]] = None,  # filename -> keys
     ) -> None:
-        """Update existing baseline after incremental sync."""
+        """Update existing baseline after incremental sync.
+
+        `file_attachments` is merged into the existing per-file `attached_to`
+        list so we don't lose history when a file already in the baseline
+        picks up an additional submittal in this run.
+        """
         baseline = baseline_store.get_baseline(self.project_id)
         if not baseline:
             return
@@ -569,10 +582,18 @@ class SyncService:
                 sub.procore_id = data["submittals"][key].get("procore_id")
                 data["submittals"][key] = sub.model_dump()
 
-        # Add uploaded files
+        # Merge uploaded files into baseline. `attached_to` accumulates across
+        # runs so a file uploaded earlier doesn't lose its prior attachments
+        # when a new submittal picks it up.
+        data.setdefault("files", {})
+        file_attachments = file_attachments or {}
         for filename, file_id in uploaded_files.items():
+            existing = data["files"].get(filename, {})
+            existing_keys = set(existing.get("attached_to") or [])
+            new_keys = set(file_attachments.get(filename, []))
             data["files"][filename] = {
                 "filename": filename,
+                "attached_to": sorted(existing_keys | new_keys),
                 "uploaded": True,
                 "procore_file_id": file_id,
             }

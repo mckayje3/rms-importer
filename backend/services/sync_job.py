@@ -95,6 +95,11 @@ async def process_sync_job(
     created_ids: dict[str, int] = {}
     updated_keys: list[str] = []
     uploaded_files: dict[str, int] = {}
+    # filename -> list of submittal keys we successfully attached it to in this
+    # run. Persisted into baseline.files[filename].attached_to so a later sync
+    # can detect partial attachment (file uploaded but missing some submittals
+    # — e.g. a new revision picked up the same file later).
+    file_attachments: dict[str, list[str]] = {}
     errors: list[str] = []
     ops_completed = 0
     manifest = file_manifest or []
@@ -228,10 +233,13 @@ async def process_sync_job(
             try:
                 from models.sync import SyncMode
                 if plan.mode == SyncMode.FULL_MIGRATION:
-                    sync_service.save_baseline(rms_data, created_ids, uploaded_files)
+                    sync_service.save_baseline(
+                        rms_data, created_ids, uploaded_files, file_attachments,
+                    )
                 else:
                     sync_service.update_baseline_with_results(
                         rms_data, created_ids, updated_keys, uploaded_files,
+                        file_attachments,
                     )
                 logger.info(f"Job {job_id}: baseline saved after {len(created_ids)} creates")
             except Exception as e:
@@ -255,18 +263,18 @@ async def process_sync_job(
                 temp_path = item["temp_path"]
                 submittal_keys = item["submittal_keys"]
 
+                attached_keys: list[str] = []
                 try:
                     prostore_file_id = await api.upload_file(project_id, temp_path)
                     await asyncio.sleep(DELAY_BETWEEN_CALLS)
 
-                    attached_count = 0
                     for key in submittal_keys:
                         procore_id = key_to_procore_id.get(key)
                         if procore_id:
                             await api.attach_file_to_submittal(
                                 project_id, procore_id, prostore_file_id
                             )
-                            attached_count += 1
+                            attached_keys.append(key)
                             await asyncio.sleep(DELAY_BETWEEN_CALLS)
                         else:
                             errors.append(
@@ -274,9 +282,11 @@ async def process_sync_job(
                             )
 
                     uploaded_files[filename] = prostore_file_id
+                    if attached_keys:
+                        file_attachments[filename] = attached_keys
                     logger.info(
                         f"Job {job_id}: uploaded {filename} "
-                        f"(attached to {attached_count} submittals)"
+                        f"(attached to {len(attached_keys)} submittals)"
                     )
 
                 except RateLimitError as e:
@@ -291,8 +301,11 @@ async def process_sync_job(
                                 await api.attach_file_to_submittal(
                                     project_id, procore_id, prostore_file_id
                                 )
+                                attached_keys.append(key)
                                 await asyncio.sleep(DELAY_BETWEEN_CALLS)
                         uploaded_files[filename] = prostore_file_id
+                        if attached_keys:
+                            file_attachments[filename] = attached_keys
                         errors = [e for e in errors if not e.startswith(f"{filename}:")]
                     except Exception as retry_err:
                         errors.append(f"{filename}: retry failed — {retry_err}")
@@ -367,6 +380,7 @@ async def process_sync_job(
                     try:
                         sync_service.update_baseline_with_results(
                             rms_data, created_ids, updated_keys, uploaded_files,
+                            file_attachments,
                         )
                         logger.info(f"Job {job_id}: baseline checkpoint at {len(updated_keys)} updates")
                     except Exception as e:
@@ -380,10 +394,13 @@ async def process_sync_job(
         try:
             from models.sync import SyncMode
             if plan.mode == SyncMode.FULL_MIGRATION:
-                sync_service.save_baseline(rms_data, created_ids, uploaded_files)
+                sync_service.save_baseline(
+                    rms_data, created_ids, uploaded_files, file_attachments,
+                )
             else:
                 sync_service.update_baseline_with_results(
                     rms_data, created_ids, updated_keys, uploaded_files,
+                    file_attachments,
                 )
         except Exception as e:
             errors.append(f"Failed to update baseline: {str(e)}")

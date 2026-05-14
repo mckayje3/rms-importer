@@ -1,5 +1,5 @@
 """Models for sync operations."""
-from pydantic import BaseModel, computed_field
+from pydantic import BaseModel, ConfigDict, computed_field
 from typing import Optional, Any
 from enum import Enum
 from datetime import datetime
@@ -171,11 +171,19 @@ class StoredSubmittal(BaseModel):
 
 
 class StoredFile(BaseModel):
-    """File data stored in baseline."""
+    """File data stored in baseline.
+
+    `attached_to` is the list of submittal_keys this file has been attached to.
+    Used by filter_files to detect partial attachment: a file that's uploaded
+    but missing some of the submittals the Transmittal Log maps it to.
+    """
     filename: str
-    submittal_key: str = ""
+    attached_to: list[str] = []
     uploaded: bool = False
     procore_file_id: Optional[int] = None
+
+    # Old baseline rows had `submittal_key: ""`; drop silently on load.
+    model_config = ConfigDict(extra="ignore")
 
 
 class BaselineData(BaseModel):
