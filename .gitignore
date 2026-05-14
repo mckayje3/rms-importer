@@ -11,6 +11,13 @@ backend/data/*.db
 backend/*.db
 backend/*.db-*
 
+# Standalone scripts — run outputs regenerate on demand
+scripts/.procore_token.json
+scripts/.*_progress.json
+scripts/*.log
+scripts/*.csv
+scripts/reassign_manager_lookup.json
+
 # Frontend (node_modules, next build, etc. covered by frontend/.gitignore)
 
 # OS
@@ -20,3 +27,6 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Claude Code local workspace
+.claude/
