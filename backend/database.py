@@ -106,7 +106,9 @@ def init_db():
             )
         """)
 
-        # File upload jobs — background processing of file uploads to Procore
+        # Background jobs — every module (submittals, rfi, daily_logs,
+        # observations) creates a row here. Named "file_jobs" for legacy
+        # reasons; it's the general background-job table.
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS file_jobs (
                 id TEXT PRIMARY KEY,
@@ -122,9 +124,16 @@ def init_db():
                 completed_at TEXT,
                 email TEXT,
                 file_manifest TEXT NOT NULL,
-                result_summary TEXT
+                result_summary TEXT,
+                job_type TEXT
             )
         """)
+
+        # Backfill job_type column for databases that pre-date this field.
+        cursor.execute("PRAGMA table_info(file_jobs)")
+        cols = {row["name"] for row in cursor.fetchall()}
+        if "job_type" not in cols:
+            cursor.execute("ALTER TABLE file_jobs ADD COLUMN job_type TEXT")
 
 
 class SessionStore:
@@ -406,21 +415,24 @@ class FileJobStore:
         manifest: list[dict],
         total_files: int,
         email: Optional[str] = None,
+        job_type: Optional[str] = None,
     ) -> None:
-        """Create a new file upload job."""
+        """Create a new background job. job_type is one of 'submittals',
+        'rfi', 'daily_logs', 'observations'."""
         with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO file_jobs
                 (id, project_id, company_id, session_id, status, total_files,
-                 uploaded_files, errors, created_at, email, file_manifest)
-                VALUES (?, ?, ?, ?, 'queued', ?, 0, '[]', ?, ?, ?)
+                 uploaded_files, errors, created_at, email, file_manifest, job_type)
+                VALUES (?, ?, ?, ?, 'queued', ?, 0, '[]', ?, ?, ?, ?)
             """, (
                 job_id, project_id, company_id, session_id,
                 total_files,
                 datetime.utcnow().isoformat(),
                 email,
                 json.dumps(manifest),
+                job_type,
             ))
 
     def update_progress(
@@ -476,7 +488,7 @@ class FileJobStore:
             cursor.execute(
                 "SELECT id, project_id, company_id, session_id, status, total_files, "
                 "uploaded_files, errors, created_at, started_at, completed_at, "
-                "email, file_manifest, result_summary FROM file_jobs WHERE id = ?",
+                "email, file_manifest, result_summary, job_type FROM file_jobs WHERE id = ?",
                 (job_id,),
             )
             row = cursor.fetchone()
@@ -495,7 +507,7 @@ class FileJobStore:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT id, status, total_files, uploaded_files, errors, "
-                "created_at, started_at, completed_at, result_summary "
+                "created_at, started_at, completed_at, result_summary, job_type "
                 "FROM file_jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT ?",
                 (project_id, limit),
             )

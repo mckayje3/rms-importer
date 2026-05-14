@@ -251,6 +251,7 @@ async def execute_deficiency_import(
         session_id=x_auth_session,
         manifest=[],
         total_files=parse_result.total_count,
+        job_type="observations",
     )
 
     asyncio.create_task(

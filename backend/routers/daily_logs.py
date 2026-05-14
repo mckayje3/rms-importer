@@ -236,6 +236,7 @@ async def execute_daily_log_import(
         session_id=x_auth_session,
         manifest=[],
         total_files=total,
+        job_type="daily_logs",
     )
 
     asyncio.create_task(

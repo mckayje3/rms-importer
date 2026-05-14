@@ -217,6 +217,8 @@ export interface FileFilterResponse {
   total_checked: number;
 }
 
+export type JobType = "submittals" | "rfi" | "daily_logs" | "observations";
+
 export interface FileJobStatus {
   id: string;
   status: "queued" | "running" | "completed" | "failed";
@@ -234,6 +236,8 @@ export interface FileJobStatus {
     updated?: number;
     files?: number;
   } | null;
+  // Module that produced this job. Older rows (pre-job_type) are null.
+  job_type: JobType | null;
 }
 
 // Tool Selection

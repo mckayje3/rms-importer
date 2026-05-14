@@ -404,6 +404,7 @@ async def execute_rfi_import(
         session_id=x_auth_session,
         manifest=[],
         total_files=total_operations,
+        job_type="rfi",
     )
 
     asyncio.create_task(
@@ -531,6 +532,7 @@ async def execute_rfi_import_with_files(
         session_id=x_auth_session,
         manifest=[],
         total_files=total_operations,
+        job_type="rfi",
     )
 
     asyncio.create_task(
